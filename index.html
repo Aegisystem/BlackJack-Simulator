@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mesa 21 · Entrenador de Blackjack</title>
+  <meta name="description" content="Simulador de blackjack para practicar estrategia básica: 7 puestos, varios jugadores, bots y divisiones de hasta 5 manos.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect x='10' y='6' width='40' height='52' rx='6' fill='%23f7f2e7' stroke='%23123' stroke-width='3'/><text x='30' y='42' font-size='26' text-anchor='middle' fill='%23b3261e' font-family='Georgia'>21</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">21</span>
+      <div>
+        <h1>Mesa 21</h1>
+        <p>Entrenador de estrategia básica</p>
+      </div>
+    </div>
+    <nav class="top-actions">
+      <button class="btn ghost" data-action="chart">Tabla <kbd>T</kbd></button>
+      <button class="btn ghost" data-action="open-players">Jugadores</button>
+      <button class="btn ghost" data-action="open-rules">Reglas</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="table" aria-label="Mesa de blackjack">
+      <div class="rail">
+        <div class="felt">
+          <div class="shoe" id="shoe"></div>
+          <div class="dealer" id="dealer"></div>
+          <div class="felt-rules" id="felt-rules"></div>
+          <div class="seats-scroll">
+            <div class="seats" id="seats"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="console">
+      <div class="controls" id="controls" aria-live="polite"></div>
+      <div class="coach" id="coach" aria-live="polite"></div>
+    </section>
+
+    <section class="roster" id="roster" aria-label="Jugadores"></section>
+  </main>
+
+  <!-- Tabla de estrategia básica -->
+  <dialog id="dlg-chart" class="dlg wide">
+    <div class="dlg-head">
+      <h2>Estrategia básica</h2>
+      <button class="x" data-action="close" aria-label="Cerrar">×</button>
+    </div>
+    <p class="muted" id="chart-rules"></p>
+    <div class="tabs" id="chart-tabs">
+      <button data-action="chart-tab" data-tab="hard">Duras</button>
+      <button data-action="chart-tab" data-tab="soft">Suaves</button>
+      <button data-action="chart-tab" data-tab="pairs">Parejas</button>
+    </div>
+    <div class="chart-wrap" id="chart-table"></div>
+    <div class="legend">
+      <span><i class="k-H">H</i> Pedir</span>
+      <span><i class="k-S">S</i> Plantarse</span>
+      <span><i class="k-D">D</i> Doblar (si no, pedir)</span>
+      <span><i class="k-Ds">Ds</i> Doblar (si no, plantarse)</span>
+      <span><i class="k-P">P</i> Dividir</span>
+      <span><i class="k-Rh">Rh</i> Rendirse (si no, pedir)</span>
+      <span><i class="k-Rs">Rs</i> Rendirse (si no, plantarse)</span>
+      <span><i class="k-Rp">Rp</i> Rendirse (si no, dividir)</span>
+    </div>
+    <p class="muted small">La tabla se ajusta a las reglas de la mesa. Durante tu turno se resalta la casilla de tu mano. Nunca tomes seguro.</p>
+  </dialog>
+
+  <!-- Jugadores -->
+  <dialog id="dlg-players" class="dlg">
+    <div class="dlg-head">
+      <h2>Jugadores</h2>
+      <button class="x" data-action="close" aria-label="Cerrar">×</button>
+    </div>
+    <p class="muted">Cada jugador tiene su propio saldo y puede ocupar varios puestos. Los bots juegan siempre con estrategia básica y se recargan solos si se quedan sin saldo.</p>
+    <p class="warn" id="players-busy" hidden>Hay una ronda en curso: el saldo y el tipo se pueden cambiar entre rondas.</p>
+    <div id="players-list" class="players-list"></div>
+    <div class="btn-row">
+      <button class="btn ghost" data-action="add-player">+ Jugador</button>
+      <button class="btn ghost" data-action="add-bot">+ Bot</button>
+      <span class="spacer"></span>
+      <button class="btn primary" data-action="save-players">Guardar</button>
+    </div>
+  </dialog>
+
+  <!-- Reglas -->
+  <dialog id="dlg-rules" class="dlg">
+    <div class="dlg-head">
+      <h2>Reglas y práctica</h2>
+      <button class="x" data-action="close" aria-label="Cerrar">×</button>
+    </div>
+    <form id="rules-form" class="rules" onsubmit="return false">
+      <fieldset>
+        <legend>Mesa</legend>
+        <label>Mazos
+          <select name="decks" data-round-lock><option>1</option><option>2</option><option>4</option><option>6</option><option>8</option></select>
+        </label>
+        <label>Penetración del zapato
+          <select name="penetration" data-round-lock><option value="0.6">60%</option><option value="0.65">65%</option><option value="0.7">70%</option><option value="0.75">75%</option><option value="0.8">80%</option><option value="0.85">85%</option></select>
+        </label>
+        <label>Blackjack paga
+          <select name="bjPays" data-round-lock><option value="1.5">3 a 2</option><option value="1.2">6 a 5</option></select>
+        </label>
+        <label>Máximo de manos al dividir
+          <select name="maxHands" data-round-lock><option>2</option><option>3</option><option>4</option><option>5</option></select>
+        </label>
+        <label>Apuesta mínima <input type="number" name="minBet" min="1" step="1" data-round-lock></label>
+        <label>Apuesta máxima <input type="number" name="maxBet" min="1" step="1" data-round-lock></label>
+      </fieldset>
+      <fieldset>
+        <legend>Reglas</legend>
+        <label class="chk"><input type="checkbox" name="h17" data-round-lock> El crupier pide con 17 suave (H17)</label>
+        <label class="chk"><input type="checkbox" name="das" data-round-lock> Doblar después de dividir</label>
+        <label class="chk"><input type="checkbox" name="surrender" data-round-lock> Rendición tardía</label>
+        <label class="chk"><input type="checkbox" name="resplitAces" data-round-lock> Volver a dividir Ases</label>
+        <label class="chk"><input type="checkbox" name="hitSplitAces" data-round-lock> Pedir con Ases divididos</label>
+      </fieldset>
+      <fieldset>
+        <legend>Práctica</legend>
+        <label class="chk"><input type="checkbox" name="feedback"> Corregir cada decisión</label>
+        <label class="chk"><input type="checkbox" name="showHint"> Mostrar la jugada correcta antes de decidir</label>
+        <label class="chk"><input type="checkbox" name="showCount"> Mostrar el conteo Hi-Lo</label>
+        <label>Velocidad
+          <select name="speed"><option value="0">Rápida</option><option value="1">Normal</option><option value="2">Lenta</option></select>
+        </label>
+      </fieldset>
+    </form>
+    <div class="btn-row">
+      <button class="btn ghost small danger" data-action="reset-all">Borrar todo</button>
+      <button class="btn ghost small" data-action="reset-rules">Reglas por defecto</button>
+      <span class="spacer"></span>
+      <button class="btn primary" data-action="save-rules">Guardar</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
