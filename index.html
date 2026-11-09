@@ -144,6 +144,11 @@
     </div>
     <p class="warn" id="rules-busy" hidden>Hay una ronda en curso. Las reglas de la mesa se cambian entre rondas.</p>
     <form id="rules-form" class="rules" onsubmit="return false">
+      <div class="profiles">
+        <span>Perfil de mesa</span>
+        <button type="button" class="btn ghost small" data-action="profile" data-profile="pragmatic" data-round-lock>Pragmatic Play en vivo</button>
+        <button type="button" class="btn ghost small" data-action="profile" data-profile="usa" data-round-lock>Clásica de EE. UU.</button>
+      </div>
       <fieldset>
         <legend>Mesa</legend>
         <label>Mazos
@@ -168,6 +173,12 @@
         <label class="chk"><input type="checkbox" name="surrender" data-round-lock> Rendición tardía</label>
         <label class="chk"><input type="checkbox" name="resplitAces" data-round-lock> Volver a dividir Ases</label>
         <label class="chk"><input type="checkbox" name="hitSplitAces" data-round-lock> Pedir con Ases divididos</label>
+        <label>El crupier revisa si tiene Blackjack
+          <select name="peek" data-round-lock><option value="us">Con As o figura (EE. UU.)</option><option value="ace">Solo con As (mesas en vivo)</option></select>
+        </label>
+        <label>Si no revisó y tiene Blackjack
+          <select name="noPeekLoss" data-round-lock><option value="all">Se pierde todo lo apostado</option><option value="original">Solo se pierde la apuesta inicial</option></select>
+        </label>
       </fieldset>
       <fieldset>
         <legend>Práctica</legend>
@@ -176,6 +187,9 @@
         <label class="chk"><input type="checkbox" name="showCount"> Mostrar el conteo Hi-Lo</label>
         <label>Velocidad
           <select name="speed"><option value="0">Rápida</option><option value="1">Normal</option><option value="2">Lenta</option></select>
+        </label>
+        <label>Tiempo para decidir
+          <select name="decisionTime"><option value="0">Sin límite</option><option value="10">10 segundos</option><option value="15">15 segundos</option><option value="20">20 segundos</option><option value="30">30 segundos</option></select>
         </label>
       </fieldset>
       <fieldset>

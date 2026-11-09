@@ -47,6 +47,9 @@ const DEFAULT_SETTINGS = {
   feedback: true,
   showCount: false,
   speed: 1, // 0 rápido · 1 normal · 2 lento
+  peek: 'us', // 'us': el crupier revisa si tiene Blackjack con As o figura · 'ace': solo con As
+  noPeekLoss: 'all', // si no revisó y tiene Blackjack: 'all' se pierde todo · 'original' solo la apuesta inicial
+  decisionTime: 0, // segundos para decidir; 0 = sin límite
   sound: true,
   volume: 0.7,
   feedbackSound: true,
@@ -150,6 +153,17 @@ const isHumanSeat = (seat) => {
   return !!p && !p.isBot;
 };
 const S = () => state.settings;
+
+// Perfiles de mesa con reglas conocidas.
+const PROFILES = {
+  // Pragmatic Play Live Blackjack: 8 mazos, S17, una sola división, sin pedir con Ases divididos,
+  // doblar tras dividir (salvo Ases), sin rendición; el crupier solo revisa su carta con un As.
+  pragmatic: { decks: 8, h17: false, das: true, surrender: false, maxHands: 2, resplitAces: false, hitSplitAces: false, bjPays: 1.5, peek: 'ace', noPeekLoss: 'all', decisionTime: 15 },
+  usa: { decks: 6, h17: false, das: true, surrender: true, maxHands: 4, resplitAces: true, hitSplitAces: false, bjPays: 1.5, peek: 'us', noPeekLoss: 'all', decisionTime: 0 },
+};
+
+/** El crupier no revisó si tiene Blackjack con esta carta y, si lo tiene, se lleva también lo doblado y dividido. */
+const noPeekFor = (up) => S().peek === 'ace' && S().noPeekLoss === 'all' && cardValue(up) === 10;
 // Posición estéreo de cada puesto: el puesto 1 queda a la derecha y el 7 a la izquierda.
 const panFor = (si) => ((3 - si) / 3) * 0.55;
 const applySound = () => sfx.configure({ enabled: S().sound, volume: S().volume, voice: S().voice });
@@ -230,6 +244,7 @@ function optionsFor(seat, hand, player) {
     canSurrender: two && S().surrender && !hand.fromSplit && seat.hands.length === 1,
     h17: S().h17,
     das: S().das,
+    noPeek: noPeekFor(state.dealer.cards[0]),
   };
 }
 
@@ -342,7 +357,9 @@ async function deal() {
   const up = state.dealer.cards[0];
   let dealerBJ = false;
   if (up.rank === 'A') await offerInsurance();
-  if (cardValue(up) >= 10) {
+  // Con un As el crupier siempre revisa; con una figura, solo en las mesas de EE. UU.
+  state.peeked = up.rank === 'A' || (S().peek === 'us' && cardValue(up) === 10);
+  if (state.peeked) {
     await wait(450);
     dealerBJ = isBlackjack(state.dealer.cards);
     if (dealerBJ) revealHole();
@@ -360,7 +377,7 @@ async function deal() {
   settle();
   const soundEnd = settleSounds();
   if (state.shoe.length <= state.cutAt) state.needShuffle = true;
-  state.summary = roundSummary(dealerBJ);
+  state.summary = roundSummary();
   if (!dealerBJ) sfx.say(state.summary.title);
   state.phase = 'betting';
   state.turn = null;
@@ -454,8 +471,38 @@ async function playSeats() {
 function askHuman(o, rec) {
   return new Promise((resolve) => {
     state.pending = { o, rec, resolve };
+    startDecisionTimer();
     render();
   });
+}
+
+/* Tiempo para decidir, como en las mesas en vivo. Si se acaba, se juega la «decisión honesta»:
+   pedir con 11 o menos y plantarse con 12 o más; en el seguro, no tomarlo. */
+let decisionTimer = 0;
+function startDecisionTimer() {
+  clearTimeout(decisionTimer);
+  const secs = S().decisionTime;
+  if (!secs || !state.pending) return;
+  state.pending.started = performance.now();
+  state.pending.ms = secs * 1000;
+  decisionTimer = setTimeout(onDecisionTimeout, secs * 1000);
+}
+
+function onDecisionTimeout() {
+  const pend = state.pending;
+  if (!pend) return;
+  state.timedOut = true;
+  if (pend.kind === 'insurance') {
+    tableEvent('Se acabó el tiempo: sin seguro');
+    humanAct('N');
+    return;
+  }
+  const cur = currentHumanHand();
+  const total = cur ? handValue(cur.hand.cards).total : 21;
+  let act = total <= 11 ? 'H' : 'S';
+  if (!isLegal(act, pend.o)) act = 'S';
+  tableEvent(`Se acabó el tiempo: ${act === 'H' ? 'pides carta' : 'te plantas'}`);
+  humanAct(act);
 }
 
 const INSURANCE_REASON =
@@ -474,6 +521,7 @@ async function offerInsurance() {
     state.hintShown = false;
     const take = await new Promise((resolve) => {
       state.pending = { kind: 'insurance', cost, resolve };
+      startDecisionTimer();
       render();
     });
     if (take) {
@@ -502,6 +550,7 @@ async function offerInsurance() {
 function humanAct(act) {
   const pend = state.pending;
   if (!pend) return;
+  clearTimeout(decisionTimer);
   if (pend.kind === 'insurance') {
     if (act !== 'I' && act !== 'N') return;
     state.pending = null;
@@ -542,6 +591,8 @@ function feedbackSound(ok) {
 
 function judge(player, si, hi, hand, act, rec, o) {
   const ok = act === rec.action;
+  const late = state.timedOut;
+  state.timedOut = false;
   player.stats.decisions++;
   if (ok) player.stats.correct++;
   feedbackSound(ok);
@@ -552,11 +603,11 @@ function judge(player, si, hi, hand, act, rec, o) {
     desc: `${describeHand(hand.cards)} vs ${upLabel()}`,
     chosen: act,
     rec: rec.action,
-    reason: rec.reason,
+    reason: late ? `Se acabó el tiempo. ${rec.reason}` : rec.reason,
     // La situación exacta, para poder repetirla en el repaso de errores.
     cards: hand.cards.map((c) => c.rank),
     up: state.dealer.cards[0].rank,
-    opts: { canDouble: o.canDouble, canSplit: o.canSplit, canSurrender: o.canSurrender },
+    opts: { canDouble: o.canDouble, canSplit: o.canSplit, canSurrender: o.canSurrender, noPeek: o.noPeek },
   });
 }
 
@@ -641,9 +692,12 @@ function settle() {
   const d = handValue(state.dealer.cards).total;
   const dealerBJ = isBlackjack(state.dealer.cards);
   const dealerBust = d > 21;
+  // Si el crupier no revisó y tiene Blackjack, con esta regla solo se pierde la apuesta original.
+  const originalOnly = dealerBJ && !state.peeked && S().noPeekLoss === 'original';
   for (const seat of state.seats) {
     const p = seat.playerId && getPlayer(seat.playerId);
     if (!p) continue;
+    let originalTaken = false;
     for (const h of seat.hands) {
       const t = handValue(h.cards).total;
       let back = 0;
@@ -659,8 +713,18 @@ function settle() {
           back = h.bet + h.bet * S().bjPays;
           kind = 'bj';
         }
-      } else if (dealerBJ) kind = 'lose';
-      else if (h.bust || t > 21) kind = 'bust';
+      } else if (dealerBJ) {
+        kind = 'lose';
+        if (originalOnly) {
+          // Se devuelven lo doblado y las manos divididas.
+          if (!originalTaken) back = Math.max(0, h.bet - seat.lastBet);
+          else {
+            back = h.bet;
+            kind = 'push';
+          }
+          originalTaken = true;
+        }
+      } else if (h.bust || t > 21) kind = 'bust';
       else if (dealerBust || t > d) {
         back = h.bet * 2;
         kind = 'win';
@@ -680,7 +744,9 @@ function settle() {
   }
 }
 
-function roundSummary(dealerBJ) {
+function roundSummary() {
+  // El Blackjack del crupier puede aparecer al final si no revisó con una figura.
+  const dealerBJ = isBlackjack(state.dealer.cards);
   const d = handValue(state.dealer.cards).total;
   const title = dealerBJ ? 'El crupier tiene Blackjack' : d > 21 ? `El crupier se pasa con ${d}` : `El crupier tiene ${d}`;
   const nets = new Map();
@@ -1104,7 +1170,11 @@ function renderDockInfo() {
           <label class="bet-field"><span>Apuesta</span><input data-bet-input type="number" inputmode="numeric" min="0" step="${S().minBet}" value="${seat.bet}" aria-label="Monto de la apuesta del puesto ${state.selectedSeat + 1}"></label>
           <span>libre <b class="num">${fmt(free)}</b></span>
         </div>
-        ${note || `<p class="info-hint">Toca tu círculo para poner fichas de <b>${fmt(activeChip())}</b></p>`}`;
+        ${
+          free + seat.bet < S().minBet
+            ? `<p class="notice">No te alcanza para la apuesta mínima. <button class="link" data-action="rebuy">Recargar ${fmt(p.startBankroll || 1000)}</button></p>`
+            : note || `<p class="info-hint">Toca tu círculo para poner fichas de <b>${fmt(activeChip())}</b></p>`
+        }`;
     } else {
       el.innerHTML = `<div class="info-line">Toca el círculo de un puesto tuyo para apostar, o siéntate en un puesto libre.</div>${note}`;
     }
@@ -1151,8 +1221,11 @@ function renderControls() {
   }
   const cur = currentHumanHand();
   const showRec = !!cur && (S().showHint || state.hintShown);
+  const timer = cur && state.pending.ms
+    ? `<div class="timer" role="timer" aria-label="Tiempo para decidir" style="--t:${state.pending.ms}ms"><i style="animation-delay:${-Math.round(performance.now() - state.pending.started)}ms"></i></div>`
+    : '';
   if (cur && state.pending.kind === 'insurance') {
-    el.innerHTML = `<div class="row actions" role="group" aria-label="Seguro">
+    el.innerHTML = `${timer}<div class="row actions" role="group" aria-label="Seguro">
       <button class="btn act" data-action="act" data-act="I">Tomar seguro <kbd>I</kbd></button>
       <button class="btn act${showRec ? ' rec' : ''}" data-action="act" data-act="N">Sin seguro <kbd>N</kbd></button>
     </div>`;
@@ -1164,7 +1237,7 @@ function renderControls() {
     const rec = showRec && state.pending.rec.action === k;
     return `<button class="btn act${rec ? ' rec' : ''}" data-action="act" data-act="${k}" ${ok ? '' : 'disabled'}>${ACTIONS[k]} <kbd>${k}</kbd></button>`;
   };
-  el.innerHTML = `<div class="row actions${cur ? '' : ' waiting'}" role="group" aria-label="Jugadas">${keys.map(btn).join('')}</div>`;
+  el.innerHTML = `${timer}<div class="row actions${cur ? '' : ' waiting'}" role="group" aria-label="Jugadas">${keys.map(btn).join('')}</div>`;
 }
 
 let coachOpen = false;
@@ -1454,7 +1527,7 @@ function dealDrill(cards, up, opts) {
   drill.cards = cards.map((c, i) => ({ ...c, id: uid('d'), at: t + 120 * (i + 1) }));
   drill.up = { ...up, id: uid('d'), at: t };
   drill.opts = { canDouble: !!opts.canDouble, canSplit: !!opts.canSplit, canSurrender: !!opts.canSurrender && S().surrender };
-  drill.rec = bestAction(drill.cards, drill.up, { ...drill.opts, h17: S().h17, das: S().das });
+  drill.rec = bestAction(drill.cards, drill.up, { ...drill.opts, h17: S().h17, das: S().das, noPeek: noPeekFor(drill.up) });
   sfx.card(-0.3);
   drill.cards.forEach((_, i) => sfx.card(0.3, 0.12 * (i + 1)));
   renderDrill();
@@ -1562,8 +1635,8 @@ const UPS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 'A'];
 let chartTab = 'hard';
 
 function cellCode(cards, up, canSplit = true) {
-  const base = { canDouble: true, canSplit, canSurrender: S().surrender, h17: S().h17, das: S().das };
   const upCard = C(up === 10 ? 'K' : up);
+  const base = { canDouble: true, canSplit, canSurrender: S().surrender, h17: S().h17, das: S().das, noPeek: noPeekFor(upCard) };
   const r = bestAction(cards, upCard, base);
   if (r.action === 'D') {
     const f = bestAction(cards, upCard, { ...base, canDouble: false }).action;
@@ -1628,7 +1701,8 @@ function renderChart() {
   });
   $('#chart-table').innerHTML = `<table class="chart"><thead>${head}</thead><tbody>${body}</tbody></table>`;
   const s = S();
-  $('#chart-rules').textContent = `${s.decks} ${s.decks === 1 ? 'mazo' : 'mazos'} · ${s.h17 ? 'el crupier pide con 17 suave' : 'el crupier se planta en 17 suave'} · ${s.das ? 'doblar tras dividir' : 'sin doblar tras dividir'} · ${s.surrender ? 'rendición tardía' : 'sin rendición'}`;
+  const peek = s.peek === 'ace' ? ` · el crupier solo revisa con As${s.noPeekLoss === 'all' ? ' (con figura se pierde todo)' : ''}` : '';
+  $('#chart-rules').textContent = `${s.decks} ${s.decks === 1 ? 'mazo' : 'mazos'} · ${s.h17 ? 'el crupier pide con 17 suave' : 'el crupier se planta en 17 suave'} · ${s.das ? 'doblar tras dividir' : 'sin doblar tras dividir'} · ${s.surrender ? 'rendición tardía' : 'sin rendición'}${peek}`;
 }
 
 function openChart() {
@@ -1683,7 +1757,8 @@ function readPlayersForm() {
   pickSelectedSeat();
 }
 
-const RULE_FIELDS = ['decks', 'h17', 'das', 'surrender', 'maxHands', 'resplitAces', 'hitSplitAces', 'bjPays', 'minBet', 'maxBet', 'penetration', 'showHint', 'feedback', 'showCount', 'speed', 'sound', 'volume', 'feedbackSound', 'voice'];
+const RULE_FIELDS = ['decks', 'h17', 'das', 'surrender', 'maxHands', 'resplitAces', 'hitSplitAces', 'bjPays', 'peek', 'noPeekLoss', 'minBet', 'maxBet', 'penetration', 'showHint', 'feedback', 'showCount', 'speed', 'decisionTime', 'sound', 'volume', 'feedbackSound', 'voice'];
+const TEXT_FIELDS = ['peek', 'noPeekLoss'];
 
 function fillRules() {
   const f = $('#rules-form');
@@ -1699,6 +1774,7 @@ function fillRules() {
   });
   $('#rules-busy').hidden = !busy;
   f.elements.voice.disabled = !sfx.hasVoice();
+  syncPeekField();
 }
 
 function readRules() {
@@ -1709,7 +1785,7 @@ function readRules() {
     const input = f.elements[k];
     if (!input || input.disabled) continue;
     if (input.type === 'checkbox') state.settings[k] = input.checked;
-    else state.settings[k] = Number(input.value);
+    else state.settings[k] = TEXT_FIELDS.includes(k) ? input.value : Number(input.value);
   }
   const s = state.settings;
   s.minBet = Math.max(1, s.minBet || 1);
@@ -1726,6 +1802,25 @@ function readRules() {
     }
     botBets(false);
   }
+}
+
+/** «Qué se pierde» solo aplica si el crupier no revisa con figura. */
+function syncPeekField() {
+  const f = $('#rules-form');
+  f.elements.noPeekLoss.disabled = f.elements.peek.disabled || f.elements.peek.value !== 'ace';
+}
+
+function applyProfile(name) {
+  const f = $('#rules-form');
+  const prof = PROFILES[name];
+  if (!prof || state.phase !== 'betting') return;
+  for (const [k, v] of Object.entries(prof)) {
+    const input = f.elements[k];
+    if (!input) continue;
+    if (input.type === 'checkbox') input.checked = !!v;
+    else input.value = String(v);
+  }
+  syncPeekField();
 }
 
 /* ───────────────────────── Eventos ───────────────────────── */
@@ -1761,6 +1856,19 @@ document.addEventListener('click', (e) => {
     case 'clear-bet':
       clearBet();
       break;
+    case 'rebuy': {
+      // Recargar cuenta como recompra: el resultado neto la descuenta.
+      const seat = state.seats[state.selectedSeat];
+      const p = isHumanSeat(seat) && getPlayer(seat.playerId);
+      if (!p || state.phase !== 'betting') break;
+      p.bankroll += p.startBankroll || 1000;
+      p.rebuys = (p.rebuys || 0) + 1;
+      state.notice = '';
+      sfx.payout(panFor(state.selectedSeat));
+      save();
+      render();
+      break;
+    }
     case 'max-bet': {
       const seat = state.seats[state.selectedSeat];
       if (isHumanSeat(seat)) setBet(Infinity, { cascade: true, max: true });
@@ -1909,6 +2017,9 @@ document.addEventListener('click', (e) => {
       $('#dlg-rules').close();
       render();
       break;
+    case 'profile':
+      applyProfile(el.dataset.profile);
+      break;
     case 'reset-rules':
       state.settings = { ...DEFAULT_SETTINGS };
       fillRules();
@@ -2037,6 +2148,7 @@ $('#rules-form').elements.volume.addEventListener('input', (e) => {
   sfx.chips(1);
 });
 $('#dlg-rules').addEventListener('close', applySound);
+$('#rules-form').elements.peek.addEventListener('change', syncPeekField);
 
 load();
 applySound();

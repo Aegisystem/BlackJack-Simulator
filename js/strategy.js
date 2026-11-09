@@ -44,7 +44,9 @@ const upName = (u) => (u === 11 ? 'As' : String(u));
  * Mejor jugada según estrategia básica.
  * @param {Array} cards  cartas del jugador
  * @param {Object} upCard carta visible del crupier
- * @param {Object} o { canDouble, canSplit, canSurrender, h17, das }
+ * @param {Object} o { canDouble, canSplit, canSurrender, h17, das, noPeek }
+ *   noPeek: el crupier no revisó si tiene Blackjack con esta carta y, si lo tiene, se pierden
+ *   también las apuestas dobladas y divididas (regla europea).
  * @returns {{ action: 'H'|'S'|'D'|'P'|'R', ideal: string, reason: string }}
  *   action = jugada legal recomendada; ideal = jugada de la tabla (puede no estar permitida).
  */
@@ -76,9 +78,15 @@ export function bestAction(cards, upCard, o) {
   if (pair && o.canSplit) {
     const P = (reason) => out('P', reason);
     switch (pv) {
-      case 11: return P(`Pareja de Ases: siempre se divide. Un 12 suave es malo; dos manos empezando con 11 son excelentes.`);
+      case 11:
+        if (o.noPeek && u === 11) break; // sin revisión contra As, dividir arriesga dos apuestas
+        return P(`Pareja de Ases: siempre se divide. Un 12 suave es malo; dos manos empezando con 11 son excelentes.`);
       case 9: if ((u >= 2 && u <= 6) || u === 8 || u === 9) return P(`9-9 ${vs}: 18 no es suficiente; dividir convierte una mano mediocre en dos con ventaja.`); break;
-      case 8: return P(`8-8: siempre se divide. 16 es la peor mano; dos manos de 8 tienen mucho mejor futuro.`);
+      case 8:
+        if (o.noPeek && u >= 10) {
+          return out('H', `8-8 ${vs} sin revisión de Blackjack: si el crupier lo tiene perderías las dos apuestas, así que se pide en vez de dividir.`);
+        }
+        return P(`8-8: siempre se divide. 16 es la peor mano; dos manos de 8 tienen mucho mejor futuro.`);
       case 7: if (u <= 7) return P(`7-7 ${vs}: el crupier es vulnerable; dos manos de 7 rinden más que un 14.`); break;
       case 6: if (o.das ? u <= 6 : u >= 3 && u <= 6) return P(`6-6 ${vs}: con el crupier débil, dividir aprovecha que es probable que se pase.`); break;
       case 4: if (o.das && (u === 5 || u === 6)) return P(`4-4 ${vs} con doblar tras dividir: cada 4 puede volverse un buen doble contra un 5 o 6.`); break;
@@ -120,6 +128,7 @@ export function bestAction(cards, upCard, o) {
       : out('H', `12 duro ${vs}: solo te pasas con un 10; pedir es mejor.`);
   }
   if (total === 11) {
+    if (o.noPeek && u >= 10) return out('H', `11 ${vs} sin revisión de Blackjack: si el crupier lo tiene perderías también lo doblado; pide.`);
     if (u === 11 && !o.h17) return out('H', `11 vs As con S17 en multi-mazo: pide (doblar es ligeramente peor).`);
     return dbl('H', `11 ${vs}: la mejor mano para doblar; muchas cartas valen 10.`);
   }

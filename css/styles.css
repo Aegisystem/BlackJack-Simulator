@@ -629,6 +629,16 @@ kbd {
 .btn.act.rec { border-color: var(--gold); background: #e6b65c24; color: var(--gold-2); }
 .btn.act.wrong { border-color: var(--bad); background: #f2836f1f; color: var(--bad-2); }
 .btn.act.rec:disabled, .btn.act.wrong:disabled { opacity: 1; }
+/* Tiempo para decidir: la barra se vacía y se vuelve roja al final. */
+.timer { width: 100%; max-width: 680px; height: 4px; border-radius: 2px; background: #ffffff14; overflow: hidden; }
+.timer i {
+  display: block; height: 100%;
+  background: var(--gold);
+  transform-origin: left center;
+  animation: timer var(--t) linear both, timer-color var(--t) linear both;
+}
+@keyframes timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes timer-color { 0%, 66% { background: var(--gold); } 100% { background: var(--bad); } }
 .link { border: 0; background: none; padding: 0; color: var(--gold-2); font-size: 12px; font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 
 /* Entrenador */
@@ -805,6 +815,7 @@ input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
 .tb[aria-pressed="false"] { color: var(--muted); }
 
 .rules { display: grid; gap: 12px; margin: 12px 0 0; }
+.profiles { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; color: var(--muted); }
 .rules fieldset {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
