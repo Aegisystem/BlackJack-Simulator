@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="felt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f6e48"/>
+      <stop offset="1" stop-color="#0c3221"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity=".45"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#felt)"/>
+  <g transform="rotate(-8 256 256)" filter="url(#shadow)">
+    <rect x="146" y="92" width="220" height="308" rx="26" fill="#fbf8f1"/>
+    <text x="256" y="300" text-anchor="middle" font-family="Didot, 'Bodoni 72', Georgia, serif" font-weight="700" font-size="150" fill="#b8322a">21</text>
+  </g>
+</svg>

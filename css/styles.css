@@ -104,6 +104,7 @@ kbd {
   justify-content: space-between;
   gap: 12px;
   padding: 10px clamp(12px, 2vw, 24px);
+  padding-top: max(10px, env(safe-area-inset-top));
 }
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .brand-mark {
@@ -838,6 +839,9 @@ input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
 .rules legend { padding: 0 6px; color: var(--gold-2); font-size: 13px; font-weight: 700; }
 .rules label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .rules label.chk { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+.install { margin-top: 14px; }
+.install h3 { margin: 0 0 4px; }
+.install p { margin: 0 0 8px; }
 .keys { margin-top: 12px; font-size: 13px; }
 .keys summary { cursor: pointer; color: var(--text-2); }
 .keys dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 10px 0 0; }

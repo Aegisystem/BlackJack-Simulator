@@ -6,7 +6,14 @@
   <meta name="theme-color" content="#0c1411">
   <title>Mesa 21 · Entrenador de Blackjack</title>
   <meta name="description" content="Simulador de blackjack para practicar estrategia básica: 7 puestos, varios jugadores, bots y divisiones de hasta 5 manos.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect x='12' y='5' width='40' height='54' rx='6' fill='%23fbf8f1'/><text x='32' y='43' font-size='26' font-weight='700' text-anchor='middle' fill='%23b8322a' font-family='Georgia'>21</text></svg>">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Mesa 21">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,500;6..96,700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
@@ -209,6 +216,11 @@
         <label class="chk"><input type="checkbox" name="voice"> Voz del crupier (usa la voz del sistema)</label>
       </fieldset>
     </form>
+    <div class="install" id="install">
+      <h3>Instalar como app</h3>
+      <p class="muted small" id="install-text">Instala Mesa 21 en tu celular o computador para abrirla como una app y jugar sin internet.</p>
+      <button type="button" class="btn ghost small" data-action="install" id="install-btn" hidden>Instalar Mesa 21</button>
+    </div>
     <details class="keys">
       <summary>Atajos de teclado</summary>
       <dl>

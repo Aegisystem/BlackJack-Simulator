@@ -2128,6 +2128,15 @@ document.addEventListener('click', (e) => {
       $('#dlg-rules').close();
       render();
       break;
+    case 'install':
+      if (installPrompt) {
+        installPrompt.prompt();
+        installPrompt.userChoice.finally(() => {
+          installPrompt = null;
+          $('#install-btn').hidden = true;
+        });
+      }
+      break;
     case 'profile':
       applyProfile(el.dataset.profile);
       break;
@@ -2275,6 +2284,28 @@ addEventListener('resize', () => {
     keepSeatInView();
   }, 80);
 });
+
+/* Instalar como app y jugar sin internet (service worker). */
+let installPrompt = null;
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  $('#install-btn').hidden = false;
+});
+addEventListener('appinstalled', () => {
+  installPrompt = null;
+  $('#install-btn').hidden = true;
+  $('#install-text').textContent = 'Mesa 21 ya está instalada.';
+});
+if (/iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone) {
+  $('#install-text').textContent = 'En iPhone: toca Compartir y luego «Agregar a inicio» para abrir Mesa 21 como una app y jugar sin internet.';
+}
+if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) {
+  $('#install-text').textContent = 'Estás usando Mesa 21 como app instalada.';
+}
 
 // Solo para pruebas: ?debug expone el estado en la consola.
 if (new URLSearchParams(location.search).has('debug')) window.mesa21 = { state, render, buildShoe, drill };

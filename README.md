@@ -25,6 +25,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Perfiles de mesa**: «Pragmatic Play en vivo» (8 mazos, el crupier se planta en 17, una sola división, sin pedir con Ases divididos, sin rendición y el crupier solo revisa su carta con un As) y «Clásica de EE. UU.». La tabla y las correcciones se ajustan: por ejemplo, sin revisión con figura se pide con 11 o con 8-8 contra 10.
 - **Tiempo para decidir** opcional (10 a 30 segundos), como en vivo. Si se acaba, se pide con 11 o menos y se planta con 12 o más.
 - **Reglas configurables**: de 1 a 8 mazos, carta de corte (aleatoria o fija), S17 o H17, doblar después de dividir, rendición tardía, pago del blackjack (3 a 2 o 6 a 5), si el crupier revisa su carta con figura y apuestas mínima y máxima.
+- **Se instala como app** en el celular o el computador y funciona sin internet (service worker). En iPhone: Compartir → «Agregar a inicio».
 - Los saldos, las estadísticas y las reglas se guardan en el navegador (`localStorage`).
 
 ## Atajos de teclado
@@ -74,6 +75,8 @@ js/strategy.js    Estrategia básica (funciones puras)
 js/app.js         Juego, bots, interfaz y guardado
 js/sound.js       Sonidos y voz del crupier
 sounds/           Grabaciones de cartas y fichas (MP3)
+icons/            Iconos de la app
+manifest.webmanifest, sw.js   App instalable y modo sin internet
 ```
 
 La estrategia de `js/strategy.js` está pensada para zapatos de 4 a 8 mazos. Con 1 o 2 mazos la estrategia exacta cambia un poco en algunas manos.
