@@ -189,8 +189,8 @@ export function chips(n = 1, pan = 0, delay = 0) {
 // Golpes limpios de ficha contra ficha (un solo impacto, sin rebote), de más grave a más
 // brillante. Se eligieron midiendo cada grabación.
 const CLACKS = ['chips-collide-1', 'chips-stack-4', 'chips-stack-1', 'chips-collide-2', 'chips-stack-2', 'chips-stack-5', 'chips-stack-6'];
-// Las fichas grandes suenan un poco más graves y pesadas.
-const WEIGHT = { 5: 1.06, 25: 1.03, 100: 1, 500: 0.95, 1000: 0.91 };
+// Las fichas de más valor suenan un poco más graves y pesadas.
+const weight = (value) => Math.max(0.82, 1.06 - 0.012 * Math.log2(Math.max(1, value)));
 let combo = 0;
 let lastBet = 0;
 let lastClack = '';
@@ -204,7 +204,7 @@ export function bet(value = 5, pan = 0, first = false) {
   const now = performance.now();
   combo = now - lastBet < 700 ? Math.min(combo + 1, 14) : 0;
   lastBet = now;
-  const r = (WEIGHT[value] || 1) * (1 + combo * 0.018);
+  const r = weight(value) * (1 + combo * 0.018);
   const rate = [r * 0.99, r * 1.01];
   if (first && playName('chip-lay-1', { pan, gain: 1, rate })) return;
   const top = Math.min(CLACKS.length - 1, 1 + Math.floor(combo / 2));

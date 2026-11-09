@@ -18,6 +18,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Sonido real**: grabaciones de cartas y fichas para el reparto, la carta del crupier al voltearse, las apuestas, los pagos, la recogida de fichas y la barajada. Cada puesto suena desde su lado en estéreo. También hay un tono opcional de acierto o error y una voz del crupier opcional (usa la voz del sistema).
 - **Animación de cartas**: salen del zapato, el crupier levanta y voltea su carta oculta, y al empezar cada ronda recoge las cartas de la anterior.
 - **Corte aleatorio**: por defecto, en cada barajada la carta de corte cae en un punto al azar entre el 45% y el 55% del zapato, para que no sepas cuándo se va a barajar.
+- **Apuestas rápidas**: las fichas se adaptan a la apuesta mínima de la mesa (con mínimo de 5.000 son 5k, 25k, 100k, 500k y 1M). También puedes escribir el monto exacto o usar «Máx» para apostar lo más posible.
 - **Reglas configurables**: de 1 a 8 mazos, carta de corte (aleatoria o fija), S17 o H17, doblar después de dividir, rendición tardía, pago del blackjack (3 a 2 o 6 a 5) y apuestas mínima y máxima.
 - Los saldos, las estadísticas y las reglas se guardan en el navegador (`localStorage`).
 

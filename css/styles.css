@@ -30,11 +30,17 @@
   --ink: #1b1f24;
   --red: #b8322a;
 
+  --chip-1: #e4e0d4;
   --chip-5: #c7362c;
   --chip-25: #1f8a4c;
   --chip-100: #2a2d33;
   --chip-500: #6b3fa6;
   --chip-1000: #c58f25;
+  --chip-5000: #9a5a22;
+  --chip-25000: #0f7a84;
+  --chip-100000: #a32c6b;
+  --chip-500000: #2d58b0;
+  --chip-1000000: #46525f;
 
   --font-ui: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-display: 'Bodoni Moda', Georgia, 'Times New Roman', serif;
@@ -547,6 +553,20 @@ kbd {
 .info-line { font-size: 14px; color: var(--text-2); }
 .info-line b { color: var(--text); }
 .notice { margin: 2px 0 0; font-size: 13px; color: var(--bad-2); }
+.bet-line { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; }
+.bet-field { display: inline-flex; align-items: center; gap: 8px; }
+.bet-field input {
+  width: 108px; height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: #0006;
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.bet-field input:hover { border-color: #5f7d6c; }
+.bet-field input:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; border-color: transparent; }
 .tools { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
 
 .row { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
@@ -570,10 +590,7 @@ kbd {
 .chip::before { content: ''; position: absolute; inset: 18%; z-index: -1; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px #0000002e; }
 .chip:hover { transform: translateY(-3px); box-shadow: 0 7px 0 #0008, 0 12px 18px -8px #000c, inset 0 0 0 3px #0003; }
 .chip:active { transform: translateY(2px) scale(.95); box-shadow: 0 1px 0 #0008, inset 0 0 0 3px #0003; transition-duration: .05s; }
-.chip.c25 { --c: var(--chip-25); }
-.chip.c100 { --c: var(--chip-100); }
-.chip.c500 { --c: var(--chip-500); }
-.chip.c1000 { --c: var(--chip-1000); }
+.chip.light { color: var(--ink); text-shadow: none; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;

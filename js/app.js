@@ -6,7 +6,16 @@ import * as sfx from './sound.js';
 const SEATS = 7;
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
-const CHIPS = [5, 25, 100, 500, 1000];
+// Valores de ficha de casino. En la mesa se muestran 5 seguidos, empezando por la apuesta mínima.
+const LADDER = [1, 5, 25, 100, 500, 1000, 5000, 25000, 100000, 500000, 1000000];
+function chipSet() {
+  let i = 0;
+  LADDER.forEach((v, k) => {
+    if (v <= state.settings.minBet) i = k;
+  });
+  i = Math.min(i, LADDER.length - 5);
+  return LADDER.slice(i, i + 5);
+}
 const COLORS = ['#e8b04b', '#5fb3e8', '#ef7a62', '#8fd17a', '#c48be8', '#ec8fc2', '#6fdccd', '#e6dc7a'];
 const STORE = 'bj-entrenador-v1';
 const LOG_MAX = 300;
@@ -150,6 +159,7 @@ const fmt = (n) => money.format(n).replace('US', '');
 const signed = (n) => (n === 0 ? fmt(0) : `${n > 0 ? '+' : '−'}${fmt(Math.abs(n))}`);
 const shortMoney = (n) => {
   const s = (x) => (Number.isInteger(x) ? String(x) : x.toFixed(1).replace('.', ','));
+  if (n >= 1e6) return `${s(n / 1e6)}M`;
   return n >= 1000 ? `${s(n / 1000)}k` : s(n);
 };
 
@@ -709,6 +719,34 @@ function addChip(v, opts = {}) {
   render();
 }
 
+/** Fija la apuesta del puesto elegido en un monto exacto (escrito o «Máx»). */
+function setBet(amount, opts = {}) {
+  if (state.phase !== 'betting') return;
+  const seat = state.seats[state.selectedSeat];
+  if (!isHumanSeat(seat)) return notice('Primero toca el círculo de apuesta de un puesto tuyo.');
+  const p = getPlayer(seat.playerId);
+  const limit = Math.min(S().maxBet, p.bankroll - committedBy(p.id) + seat.bet);
+  let v = Math.floor(Number(amount) || 0);
+  if (v < 0) v = 0;
+  state.notice = '';
+  if (v > limit) {
+    v = Math.floor(limit);
+    if (!opts.max) state.notice = limit < S().maxBet ? `${p.name} solo tiene ${fmt(limit)} libres para este puesto.` : `La apuesta máxima es ${fmt(S().maxBet)}.`;
+  }
+  if (v > 0 && v < S().minBet) {
+    v = 0;
+    state.notice = `La apuesta mínima es ${fmt(S().minBet)}.`;
+  }
+  const grew = v > seat.bet;
+  seat.bet = v;
+  if (grew) {
+    seat.betAt = performance.now();
+    if (opts.cascade) sfx.betDouble(panFor(state.selectedSeat));
+    else sfx.chips(2, panFor(state.selectedSeat));
+  }
+  render();
+}
+
 function sit(si, playerId) {
   if (state.phase !== 'betting') return;
   const seat = state.seats[si];
@@ -752,13 +790,13 @@ const RESULT_TEXT = { win: 'Gana', lose: 'Pierde', bust: 'Se pasa', push: 'Empat
 function chipStackHTML(amount, pop) {
   const discs = [];
   let rest = amount;
-  for (const v of [...CHIPS].reverse()) {
+  for (const v of [...LADDER].reverse()) {
     while (rest >= v - 1e-9 && discs.length < 60) {
       discs.push(v);
       rest -= v;
     }
   }
-  if (!discs.length) discs.push(CHIPS[0]);
+  if (!discs.length) discs.push(LADDER[0]);
   // Como mucho 7 fichas a la vista: se conservan la base y la de arriba.
   const shown = discs.length > 7 ? [...discs.slice(0, 6), discs[discs.length - 1]] : discs;
   const n = shown.length;
@@ -1047,8 +1085,13 @@ function renderDockInfo() {
     if (isHumanSeat(seat)) {
       const p = getPlayer(seat.playerId);
       const free = p.bankroll - committedBy(p.id);
+      // No se redibuja mientras se escribe el monto, para no perder lo escrito.
+      if (document.activeElement && document.activeElement.matches('[data-bet-input]') && !state.notice) return;
       el.innerHTML = `${whoHTML(p, `Puesto ${state.selectedSeat + 1}`)}
-        <div class="info-line">Apuesta <b class="num">${fmt(seat.bet)}</b> · libre <b class="num">${fmt(free)}</b></div>${note}`;
+        <div class="info-line bet-line">
+          <label class="bet-field"><span>Apuesta</span><input data-bet-input type="number" inputmode="numeric" min="0" step="${S().minBet}" value="${seat.bet}" aria-label="Monto de la apuesta del puesto ${state.selectedSeat + 1}"></label>
+          <span>libre <b class="num">${fmt(free)}</b></span>
+        </div>${note}`;
     } else {
       el.innerHTML = `<div class="info-line">Toca el círculo de un puesto tuyo para apostar, o siéntate en un puesto libre.</div>${note}`;
     }
@@ -1080,12 +1123,13 @@ function renderControls() {
     const seat = state.seats[state.selectedSeat];
     const mine = isHumanSeat(seat);
     el.innerHTML = `<div class="row bet-row">
-      <div class="chips" role="group" aria-label="Fichas">${CHIPS.map(
-        (v, i) => `<button class="chip c${v}" data-action="chip" data-v="${v}" title="Ficha de ${v} (tecla ${i + 1})" aria-label="Agregar ficha de ${v}">${v >= 1000 ? `${v / 1000}k` : v}</button>`,
+      <div class="chips" role="group" aria-label="Fichas">${chipSet().map(
+        (v, i) => `<button class="chip${v === 1 ? ' light' : ''}" style="--c:var(--chip-${v})" data-action="chip" data-v="${v}" title="Ficha de ${fmt(v)} (tecla ${i + 1})" aria-label="Agregar ficha de ${fmt(v)}">${shortMoney(v)}</button>`,
       ).join('')}</div>
       <div class="row">
         <button class="btn ghost" data-action="clear-bet" ${mine && seat.bet ? '' : 'disabled'}>Quitar</button>
         <button class="btn ghost" data-action="double-bet" ${mine && seat.bet ? '' : 'disabled'} aria-label="Duplicar la apuesta">×2</button>
+        <button class="btn ghost" data-action="max-bet" ${mine ? '' : 'disabled'} aria-label="Apostar el máximo posible">Máx</button>
         <button class="btn primary deal" data-action="deal" ${canDeal() ? '' : 'disabled'}>Repartir <kbd>Espacio</kbd></button>
       </div>
     </div>`;
@@ -1497,7 +1541,12 @@ function readRules() {
   if (s.decks !== prevDecks || s.penetration !== prevPen) state.needShuffle = true;
   if (state.phase === 'betting') {
     for (const seat of state.seats) {
-      if (isHumanSeat(seat) && seat.bet > s.maxBet) seat.bet = s.maxBet;
+      if (!isHumanSeat(seat)) continue;
+      if (seat.bet > s.maxBet) seat.bet = s.maxBet;
+      if (seat.bet > 0 && seat.bet < s.minBet) {
+        const p = getPlayer(seat.playerId);
+        seat.bet = p.bankroll - committedBy(p.id) + seat.bet >= s.minBet ? s.minBet : 0;
+      }
     }
     botBets(false);
   }
@@ -1533,6 +1582,11 @@ document.addEventListener('click', (e) => {
     case 'clear-bet':
       clearBet();
       break;
+    case 'max-bet': {
+      const seat = state.seats[state.selectedSeat];
+      if (isHumanSeat(seat)) setBet(Infinity, { cascade: true, max: true });
+      break;
+    }
     case 'double-bet': {
       const seat = state.seats[state.selectedSeat];
       if (isHumanSeat(seat)) addChip(seat.bet || S().minBet, { double: true });
@@ -1692,6 +1746,18 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
   const sel = e.target.closest('select[data-sit]');
   if (sel) sit(Number(sel.dataset.sit), sel.value);
+  const bet = e.target.closest('[data-bet-input]');
+  if (bet) {
+    bet.blur();
+    setBet(bet.value);
+  }
+});
+// Enter en el monto confirma la apuesta.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-bet-input]')) {
+    e.preventDefault();
+    e.target.blur();
+  }
 });
 
 // Cerrar un diálogo al tocar fuera de él.
@@ -1745,7 +1811,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     deal();
   } else if (/^[1-5]$/.test(k)) {
-    addChip(CHIPS[Number(k) - 1]);
+    addChip(chipSet()[Number(k) - 1]);
   } else if (k === 'backspace' || k === 'delete') {
     e.preventDefault();
     clearBet();
