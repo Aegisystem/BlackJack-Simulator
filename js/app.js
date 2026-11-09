@@ -1,5 +1,6 @@
 import { ACTIONS, bestAction, cardValue, handValue, isBlackjack, isPair } from './strategy.js';
-import * as sfx from './sound.js';
+import * as sound from './sound.js';
+import * as net from './online.js';
 
 /* ───────────────────────── Configuración y estado ───────────────────────── */
 
@@ -86,6 +87,42 @@ const state = {
   exam: null, // examen en curso: un zapato completo sin ayudas
 };
 
+// Mesa en línea: quién es este dispositivo y con quién está conectado.
+const online = {
+  role: null, // null · 'host' (reparte) · 'guest' (se unió a una sala)
+  myId: 'local',
+  code: '',
+  peer: null,
+  conns: new Map(), // anfitrión: id del invitado -> { conn, pid, name }
+  hostConn: null,
+  actingFor: null, // anfitrión: invitado cuya jugada se está aplicando
+  pid: null,
+  name: '',
+  status: '',
+  error: '',
+  closed: false,
+  seen: new Map(), // invitado: cuándo apareció cada carta (para animarla)
+  flips: new Map(),
+  turnKey: '',
+  sentHistory: -1,
+  ready: new Set(), // dispositivos que ya pulsaron «Repartir» en esta ronda de apuestas
+  left: new Map(), // anfitrión: saldo de quien se desconectó, por nombre, por si vuelve
+};
+const NAME_KEY = 'mesa21-nombre-en-linea';
+
+// Sonidos de la mesa. En una sala, el anfitrión los reenvía para que todos oigan lo mismo.
+const SYNCED_FX = new Set(['card', 'flip', 'chips', 'payout', 'collect', 'sweep', 'shuffle', 'bet', 'betDouble', 'say']);
+const sfx = new Proxy(sound, {
+  get(target, key) {
+    const fn = target[key];
+    if (typeof fn !== 'function' || !SYNCED_FX.has(key)) return fn;
+    return (...args) => {
+      if (online.role === 'host') broadcast({ t: 'fx', k: key, a: args });
+      return fn(...args);
+    };
+  },
+});
+
 let uidN = 0;
 const uid = (p = 'id') => `${p}${Date.now().toString(36)}${(uidN++).toString(36)}`;
 
@@ -107,6 +144,7 @@ function newPlayer(name, isBot, colorIdx, bankroll = 1000) {
 }
 
 function save() {
+  if (online.role === 'guest') return;
   try {
     localStorage.setItem(
       STORE,
@@ -135,7 +173,10 @@ function load() {
     state.settings = { ...DEFAULT_SETTINGS, ...data.settings };
     // Hasta la versión 2 la apuesta mínima por defecto era 10; ahora es 5.
     if ((data.version || 1) < 2 && state.settings.minBet === 10) state.settings.minBet = 5;
-    state.players = data.players.map((p) => ({ rebuys: 0, ...p, stats: { decisions: 0, correct: 0, hands: 0, ...p.stats } }));
+    state.players = data.players
+      // Los invitados de una sala anterior ya no están conectados.
+      .filter((p) => !p.owner || p.owner === 'host')
+      .map((p) => ({ rebuys: 0, ...p, away: false, stats: { decisions: 0, correct: 0, hands: 0, ...p.stats } }));
     if (Array.isArray(data.log)) state.log = data.log.slice(0, LOG_MAX);
     if (Array.isArray(data.history)) state.history = data.history.slice(-HISTORY_MAX);
     // Hasta la versión 3 los jugadores usaban otra paleta: se pasa cada color a su nuevo par.
@@ -172,6 +213,12 @@ const isHumanSeat = (seat) => {
   const p = seat && seat.playerId && getPlayer(seat.playerId);
   return !!p && !p.isBot;
 };
+// En una sala cada jugador pertenece a un dispositivo; sin sala, todos son de este.
+const ownerOf = (p) => (p ? p.owner || 'host' : null);
+const actor = () => online.actingFor || online.myId;
+const mine = (p) => !!p && (!online.role || ownerOf(p) === actor());
+const isMySeat = (seat) => isHumanSeat(seat) && mine(getPlayer(seat.playerId));
+const pendingPlayer = () => (state.turn ? getPlayer(state.seats[state.turn.si].playerId) : null);
 const S = () => state.settings;
 
 // Perfiles de mesa con reglas conocidas.
@@ -191,8 +238,8 @@ const delay = (base) => base * [0.35, 1, 1.8][S().speed ?? 1];
 const wait = (ms) => new Promise((r) => setTimeout(r, delay(ms)));
 
 function pickSelectedSeat() {
-  if (isHumanSeat(state.seats[state.selectedSeat])) return;
-  const i = state.seats.findIndex((s) => isHumanSeat(s));
+  if (isMySeat(state.seats[state.selectedSeat])) return;
+  const i = state.seats.findIndex((s) => isMySeat(s));
   state.selectedSeat = i >= 0 ? i : null;
 }
 
@@ -310,8 +357,36 @@ function canDeal() {
   return state.seats.some((s) => s.playerId && s.bet >= S().minBet);
 }
 
+/** En una sala: dispositivos con apuesta en la mesa que todavía no pulsaron «Repartir». */
+function waitingOwners() {
+  const owners = new Set();
+  for (const s of state.seats) {
+    const p = s.playerId && getPlayer(s.playerId);
+    if (p && !p.isBot && !p.away && (s.bet || sideSum(s))) owners.add(ownerOf(p));
+  }
+  return [...owners].filter((o) => !online.ready.has(o));
+}
+
+const ownerName = (o) => (state.players.find((p) => !p.isBot && ownerOf(p) === o) || { name: 'otro jugador' }).name;
+
+/** Se reparte cuando todos los que apostaron dicen «Repartir». Quien creó la sala puede repartir ya. */
+function readyToDeal() {
+  const who = actor();
+  const force = who === 'host' && online.ready.has('host');
+  online.ready.add(who);
+  const left = waitingOwners();
+  if (!left.length || force) {
+    online.ready.clear();
+    return true;
+  }
+  const names = left.map(ownerName).join(' y ');
+  notice(who === 'host' ? `Esperando a ${names}. Pulsa Repartir otra vez para no esperar.` : `Listo. Esperando a ${names}.`);
+  return false;
+}
+
 async function deal() {
   if (state.phase !== 'betting' || (state.exam && state.exam.ending)) return;
+  if (guestSend({ t: 'deal' })) return;
   botBets(false);
   if (!canDeal()) return notice(`Pon al menos ${fmt(S().minBet)} en un puesto para repartir.`);
   for (const p of state.players) {
@@ -320,6 +395,7 @@ async function deal() {
   if (state.seats.some((s) => s.playerId && s.bet > 0 && s.bet < S().minBet)) {
     return notice(`La apuesta mínima es ${fmt(S().minBet)}.`);
   }
+  if (online.role === 'host' && !readyToDeal()) return;
 
   state.notice = '';
   state.summary = null;
@@ -422,6 +498,10 @@ async function deal() {
   }
   botBets(true);
   recordHistory();
+  if (online.role === 'host') {
+    removeAwayPlayers();
+    for (const g of online.conns.values()) seatGuest(getPlayer(g.pid));
+  }
   if (state.exam) {
     state.exam.rounds++;
     if (state.needShuffle || state.exam.endAfterRound) {
@@ -520,6 +600,12 @@ function askHuman(o, rec) {
 let decisionTimer = 0;
 function startDecisionTimer() {
   clearTimeout(decisionTimer);
+  // Un jugador que se desconectó no frena la mesa: se juega su decisión honesta.
+  const who = pendingPlayer();
+  if (online.role === 'host' && who && who.away) {
+    decisionTimer = setTimeout(onDecisionTimeout, 400);
+    return;
+  }
   const secs = S().decisionTime;
   if (!secs || !state.pending) return;
   state.pending.started = performance.now();
@@ -531,17 +617,21 @@ function onDecisionTimeout() {
   const pend = state.pending;
   if (!pend) return;
   state.timedOut = true;
+  // En una sala el aviso lo ven todos, así que nombra a quien le tocaba.
+  const p = pendingPlayer();
+  const say = (yours, theirs) =>
+    tableEvent(!online.role || !p ? `Se acabó el tiempo: ${yours}` : p.away ? `${p.name} se fue: ${theirs}` : `Se acabó el tiempo de ${p.name}: ${theirs}`);
   if (pend.kind === 'insurance') {
-    tableEvent('Se acabó el tiempo: sin seguro');
-    humanAct('N');
+    say('sin seguro', 'va sin seguro');
+    humanAct('N', '*');
     return;
   }
-  const cur = currentHumanHand();
+  const cur = currentHumanHand(true);
   const total = cur ? handValue(cur.hand.cards).total : 21;
   let act = total <= 11 ? 'H' : 'S';
   if (!isLegal(act, pend.o)) act = 'S';
-  tableEvent(`Se acabó el tiempo: ${act === 'H' ? 'pides carta' : 'te plantas'}`);
-  humanAct(act);
+  say(act === 'H' ? 'pides carta' : 'te plantas', act === 'H' ? 'pide carta' : 'se planta');
+  humanAct(act, '*');
 }
 
 const INSURANCE_REASON =
@@ -570,7 +660,7 @@ async function offerInsurance() {
     }
     player.stats.decisions++;
     if (!take) player.stats.correct++;
-    feedbackSound(!take);
+    if (mine(player)) feedbackSound(!take);
     examRecord(!take, `Seguro con ${describeHand(hand.cards)} vs As`, take ? 'I' : 'N', 'N', player);
     logDecision({
       ok: !take,
@@ -581,15 +671,21 @@ async function offerInsurance() {
       chosen: take ? 'I' : 'N',
       rec: 'N',
       reason: INSURANCE_REASON,
-    });
+    }, player);
   }
   state.turn = null;
   render();
 }
 
-function humanAct(act) {
+function humanAct(act, from = online.myId) {
   const pend = state.pending;
   if (!pend) return;
+  if (online.role === 'guest') {
+    if (mine(pendingPlayer())) guestSend({ t: 'act', act });
+    return;
+  }
+  // En una sala, cada quien decide por sus jugadores ('*' = el reloj decide por cualquiera).
+  if (online.role === 'host' && from !== '*' && ownerOf(pendingPlayer()) !== from) return;
   clearTimeout(decisionTimer);
   if (pend.kind === 'insurance') {
     if (act !== 'I' && act !== 'N') return;
@@ -617,7 +713,14 @@ function upLabel() {
   return u.rank === 'A' ? 'As' : String(cardValue(u));
 }
 
-function logDecision(entry) {
+function logDecision(entry, player) {
+  entry.pid = player.id;
+  // La corrección de un invitado se guarda en su dispositivo, no en el del anfitrión.
+  if (online.role === 'host' && !mine(player)) {
+    const guest = online.conns.get(ownerOf(player));
+    if (guest) net.send(guest.conn, { t: 'log', entry });
+    return;
+  }
   state.feedback = entry;
   state.log.unshift(entry);
   state.log = state.log.slice(0, LOG_MAX);
@@ -636,7 +739,7 @@ function judge(player, si, hi, hand, act, rec, o) {
   examRecord(ok, `${describeHand(hand.cards)} vs ${upLabel()}`, act, rec.action, player);
   player.stats.decisions++;
   if (ok) player.stats.correct++;
-  feedbackSound(ok);
+  if (mine(player)) feedbackSound(ok);
   logDecision({
     ok,
     player: player.name,
@@ -649,7 +752,7 @@ function judge(player, si, hi, hand, act, rec, o) {
     cards: hand.cards.map((c) => c.rank),
     up: state.dealer.cards[0].rank,
     opts: { canDouble: o.canDouble, canSplit: o.canSplit, canSurrender: o.canSurrender, noPeek: o.noPeek },
-  });
+  }, player);
 }
 
 async function apply(seat, hi, act, player) {
@@ -898,8 +1001,9 @@ function settleSideBets() {
 
 function addSide(kind, v) {
   if (state.phase !== 'betting') return;
+  if (guestSend({ t: 'side', si: state.selectedSeat, kind, v })) return;
   const seat = state.seats[state.selectedSeat];
-  if (!isHumanSeat(seat)) return;
+  if (!isMySeat(seat)) return;
   const p = getPlayer(seat.playerId);
   if (!seat.bet) return notice('Primero pon tu apuesta principal en el círculo grande.');
   const free = p.bankroll - committedBy(p.id);
@@ -916,8 +1020,9 @@ function addSide(kind, v) {
 
 function addChip(v, opts = {}) {
   if (state.phase !== 'betting') return;
+  if (guestSend(opts.double ? { t: 'double', si: state.selectedSeat } : { t: 'chip', si: state.selectedSeat, v })) return;
   const seat = state.seats[state.selectedSeat];
-  if (!isHumanSeat(seat)) return notice('Primero toca el círculo de apuesta de un puesto tuyo.');
+  if (!isMySeat(seat)) return notice('Primero toca el círculo de apuesta de un puesto tuyo.');
   const p = getPlayer(seat.playerId);
   const free = p.bankroll - committedBy(p.id);
   const add = Math.min(v, free, S().maxBet - seat.bet);
@@ -934,8 +1039,9 @@ function addChip(v, opts = {}) {
 /** Fija la apuesta del puesto elegido en un monto exacto (escrito o «Máx»). */
 function setBet(amount, opts = {}) {
   if (state.phase !== 'betting') return;
+  if (guestSend({ t: 'set', si: state.selectedSeat, amount: Number.isFinite(amount) ? amount : 0, max: !!opts.max })) return;
   const seat = state.seats[state.selectedSeat];
-  if (!isHumanSeat(seat)) return notice('Primero toca el círculo de apuesta de un puesto tuyo.');
+  if (!isMySeat(seat)) return notice('Primero toca el círculo de apuesta de un puesto tuyo.');
   const p = getPlayer(seat.playerId);
   const limit = Math.min(S().maxBet, p.bankroll - committedBy(p.id) + seat.bet);
   let v = Math.floor(Number(amount) || 0);
@@ -961,7 +1067,12 @@ function setBet(amount, opts = {}) {
 
 function sit(si, playerId) {
   if (state.phase !== 'betting') return;
+  if (guestSend(playerId ? { t: 'sit', si } : { t: 'leave', si })) return;
   const seat = state.seats[si];
+  // En una sala, cada quien sienta y levanta solo a sus jugadores (los bots son del anfitrión).
+  const current = seat.playerId && getPlayer(seat.playerId);
+  const next = playerId && getPlayer(playerId);
+  if (online.role && ((current && !mine(current)) || (next && !mine(next)))) return;
   seat.playerId = playerId || null;
   seat.bet = 0;
   seat.hands = [];
@@ -1085,7 +1196,7 @@ function aimNewCards(root = document) {
 }
 
 /** El crupier recoge las cartas de la ronda anterior hacia su izquierda antes de repartir. */
-async function sweepTable() {
+async function sweepTable(silent = false) {
   const els = [...document.querySelectorAll('#seats .card, #dealer .card:not(.ghost)')];
   aim.clear();
   if (!els.length) return;
@@ -1099,7 +1210,7 @@ async function sweepTable() {
     el.style.animationDelay = `${Math.min(i * 14, 220)}ms`;
     el.classList.add('gone');
   });
-  sfx.sweep();
+  if (!silent) sfx.sweep();
   await wait(520);
 }
 
@@ -1167,6 +1278,8 @@ function bannerContent() {
     };
   }
   if (state.pending && state.pending.kind === 'insurance') {
+    const p = pendingPlayer();
+    if (p && !mine(p)) return { title: `${p.name} decide el seguro`, sub: `Puesto ${state.turn.si + 1} · el crupier muestra un As`, note: ev };
     return { title: '¿Seguro?', sub: `El crupier muestra un As · cuesta ${fmt(state.pending.cost)}`, tone: 'turn', note: ev };
   }
   if (state.phase === 'playing' && state.turn) {
@@ -1175,7 +1288,7 @@ function bannerContent() {
     const hand = seat.hands[state.turn.hi];
     const handNo = seat.hands.length > 1 ? ` · mano ${state.turn.hi + 1} de ${seat.hands.length}` : '';
     const sub = `Puesto ${state.turn.si + 1}${handNo} · ${describeHand(hand.cards)} contra ${upLabel()}`;
-    if (!p.isBot) return { title: `Tu turno, ${p.name}`, sub, tone: 'turn', note: ev };
+    if (!p.isBot && mine(p)) return { title: `Tu turno, ${p.name}`, sub, tone: 'turn', note: ev };
     return { title: `Juega ${p.name}`, sub, note: ev };
   }
   if (state.phase === 'dealer') return { title: 'Juega el crupier', sub: S().h17 ? 'Pide con 17 suave' : 'Se planta en todos los 17', note: ev };
@@ -1212,8 +1325,9 @@ function seatHTML(seat, si) {
   const betting = state.phase === 'betting';
   const p = seat.playerId && getPlayer(seat.playerId);
   const human = !!p && !p.isBot;
+  const own = human && mine(p);
   const turn = !!state.turn && state.turn.si === si;
-  const selected = betting && human && state.selectedSeat === si;
+  const selected = betting && own && state.selectedSeat === si;
   const n = seat.hands.length;
   const cls = ['seat', p ? '' : 'empty', turn ? 'turn' : '', selected ? 'selected' : '', n > 1 ? `multi m${Math.min(n, 5)}` : '', betting && n ? 'stale' : '']
     .filter(Boolean)
@@ -1226,7 +1340,7 @@ function seatHTML(seat, si) {
   let inner;
   const sinceBet = seat.betAt ? performance.now() - seat.betAt : Infinity;
   if (shownBet > 0) inner = chipStackHTML(shownBet, betting && sinceBet < 280 ? sinceBet : null);
-  else if (human && betting) inner = '<span class="spot-hint">Apostar</span>';
+  else if (own && betting) inner = '<span class="spot-hint">Apostar</span>';
   else inner = `<span class="spot-num">${si + 1}</span>`;
 
   let action = '';
@@ -1236,26 +1350,32 @@ function seatHTML(seat, si) {
     label += ', libre. Sentar a alguien';
   } else {
     label += `, ${p.name}${shownBet ? `, apuesta ${fmt(shownBet)}` : ''}`;
-    if (human && betting) action = 'select-seat';
+    if (own && betting) action = 'select-seat';
   }
   const spot = `<button class="spot" ${action ? `data-action="${action}" data-seat="${si}"` : 'tabindex="-1"'} aria-label="${esc(label)}">${inner}<span class="spot-tag" aria-hidden="true">${si + 1}</span></button>`;
 
   let plate;
   if (p) {
-    const leave = betting
+    const leave = betting && mine(p)
       ? `<button class="leave" data-action="leave" data-seat="${si}" title="Levantarse del puesto" aria-label="Levantar a ${esc(p.name)} del puesto ${si + 1}">${ICON.cross}</button>`
       : '';
-    plate = `<div class="plate"><div class="who"><span class="dot" style="--c:${p.color}"></span><span class="pname">${esc(p.name)}</span></div><div class="bank">${p.isBot ? '<span class="tag">bot</span>' : ''}${fmt(p.bankroll)}</div>${leave}</div>`;
+    const ready = online.role && state.phase === 'betting' && online.ready.has(ownerOf(p));
+    const tag = p.isBot ? '<span class="tag">bot</span>' : p.away ? '<span class="tag">se fue</span>' : ready ? '<span class="tag ok">listo</span>' : online.role && !mine(p) ? '<span class="tag">en línea</span>' : '';
+    plate = `<div class="plate"><div class="who"><span class="dot" style="--c:${p.color}"></span><span class="pname">${esc(p.name)}</span></div><div class="bank">${tag}${fmt(p.bankroll)}</div>${leave}</div>`;
   } else if (!betting) {
     plate = '';
   } else {
-    const opts = state.players.map((pl) => `<option value="${pl.id}">${esc(pl.name)}${pl.isBot ? ' (bot)' : ''}</option>`).join('');
+    const opts = state.players
+      .filter((pl) => mine(pl))
+      .map((pl) => `<option value="${pl.id}">${esc(pl.name)}${pl.isBot ? ' (bot)' : ''}</option>`)
+      .join('');
     plate = `<label class="sit"><span class="sr">Sentar a alguien en el puesto ${si + 1}</span><select data-sit="${si}"><option value="">Sentarse</option>${opts}</select></label>`;
   }
 
   // Apuestas laterales a los lados del círculo principal (solo jugadores humanos).
   let spotRow = spot;
   if (S().sideBets && human) {
+    const canBet = betting && own;
     const side = (kind, label) => {
       const amount = betting ? seat.side[kind] : seat.sideStake ? seat.sideStake[kind] : 0;
       const res = !betting && seat.sideResult && seat.sideResult[kind];
@@ -1265,7 +1385,7 @@ function seatHTML(seat, si) {
       if (amount && !lost) inner = `<span class="chip-mini" style="--c:var(--chip-${chipFor(amount)})">${shortMoney(amount)}</span>`;
       const tag = won ? `<span class="side-win">${res.pay}:1</span>` : '';
       const name = `${SIDE_NAMES[kind]} del puesto ${si + 1}${amount ? `, apuesta ${fmt(amount)}` : ''}${won ? `, gana ${res.name}` : ''}`;
-      return `<button class="side-spot${won ? ' won' : ''}${lost ? ' lost' : ''}" ${betting ? `data-action="side-bet" data-seat="${si}" data-side="${kind}"` : 'tabindex="-1"'} aria-label="${esc(name)}">${inner}${tag}</button>`;
+      return `<button class="side-spot${won ? ' won' : ''}${lost ? ' lost' : ''}" ${canBet ? `data-action="side-bet" data-seat="${si}" data-side="${kind}"` : 'tabindex="-1"'} aria-label="${esc(name)}">${inner}${tag}</button>`;
     };
     spotRow = `<div class="spot-row">${side('pp', 'PP')}${spot}${side('t3', '21+3')}</div>`;
   }
@@ -1303,10 +1423,13 @@ function fitSeats() {
   sc.style.marginTop = `${-Math.max(0, Math.min(wanted, slack - 4))}px`;
 }
 
-function currentHumanHand() {
+/** La decisión pendiente, si es de un jugador de este dispositivo (o de cualquiera con any). */
+function currentHumanHand(any = false) {
   if (!state.pending || !state.turn) return null;
   const seat = state.seats[state.turn.si];
-  return { seat, hand: seat.hands[state.turn.hi], player: getPlayer(seat.playerId), si: state.turn.si, hi: state.turn.hi };
+  const player = getPlayer(seat.playerId);
+  if (!any && !mine(player)) return null;
+  return { seat, hand: seat.hands[state.turn.hi], player, si: state.turn.si, hi: state.turn.hi };
 }
 
 function whoHTML(p, extra) {
@@ -1318,7 +1441,7 @@ function renderDockInfo() {
   const note = state.notice ? `<p class="notice" role="alert">${esc(state.notice)}</p>` : '';
   if (state.phase === 'betting') {
     const seat = state.seats[state.selectedSeat];
-    if (isHumanSeat(seat)) {
+    if (isMySeat(seat)) {
       const p = getPlayer(seat.playerId);
       const free = p.bankroll - committedBy(p.id);
       // No se redibuja mientras se escribe el monto, para no perder lo escrito.
@@ -1369,17 +1492,17 @@ function renderControls() {
   const el = $('#controls');
   if (state.phase === 'betting') {
     const seat = state.seats[state.selectedSeat];
-    const mine = isHumanSeat(seat);
+    const own = isMySeat(seat);
     el.innerHTML = `<div class="row bet-row">
       <div class="chips" role="group" aria-label="Ficha para apostar">${chipSet().map((v, i) => {
         const on = v === activeChip();
         return `<button class="chip${v === 1 ? ' light' : ''}${on ? ' on' : ''}" style="--c:var(--chip-${v})" data-action="pick-chip" data-v="${v}" aria-pressed="${on}" title="Ficha de ${fmt(v)} (tecla ${i + 1})" aria-label="Marcar la ficha de ${fmt(v)}">${shortMoney(v)}</button>`;
       }).join('')}</div>
       <div class="row">
-        <button class="btn ghost" data-action="clear-bet" ${mine && seat.bet ? '' : 'disabled'}>Quitar</button>
-        <button class="btn ghost" data-action="double-bet" ${mine && seat.bet ? '' : 'disabled'} aria-label="Duplicar la apuesta">×2</button>
-        <button class="btn ghost" data-action="max-bet" ${mine ? '' : 'disabled'} aria-label="Apostar el máximo posible">Máx</button>
-        <button class="btn primary deal" data-action="deal" ${canDeal() ? '' : 'disabled'}>Repartir <kbd>Espacio</kbd></button>
+        <button class="btn ghost" data-action="clear-bet" ${own && seat.bet ? '' : 'disabled'}>Quitar</button>
+        <button class="btn ghost" data-action="double-bet" ${own && seat.bet ? '' : 'disabled'} aria-label="Duplicar la apuesta">×2</button>
+        <button class="btn ghost" data-action="max-bet" ${own ? '' : 'disabled'} aria-label="Apostar el máximo posible">Máx</button>
+        ${dealButton()}
       </div>
     </div>`;
     return;
@@ -1405,6 +1528,12 @@ function renderControls() {
   el.innerHTML = `${timer}<div class="row actions${cur ? '' : ' waiting'}" role="group" aria-label="Jugadas">${keys.map(btn).join('')}</div>`;
 }
 
+function dealButton() {
+  const label = (t, on = true) => `<button class="btn primary deal" data-action="deal" ${canDeal() && on ? '' : 'disabled'}>${t} <kbd>Espacio</kbd></button>`;
+  if (!online.role || !online.ready.has(online.myId) || !waitingOwners().length) return label('Repartir');
+  return online.role === 'host' ? label('Repartir ya') : label('Esperando…', false);
+}
+
 let coachOpen = false;
 function coachCard(kind, icon, title, text, toggle = true) {
   return `<div class="coach-card ${kind}"${toggle ? ' data-action="coach-toggle"' : ''}><div class="coach-title">${icon}<span>${esc(title)}</span></div><p class="coach-text">${esc(text)}</p></div>`;
@@ -1418,7 +1547,7 @@ function accuracyText(p) {
 function renderCoach() {
   const el = $('#coach');
   const cur = currentHumanHand();
-  const humans = state.players.filter((p) => !p.isBot);
+  const humans = state.players.filter((p) => !p.isBot && mine(p)); // en una sala, solo los de este dispositivo
   let html;
   if (state.exam) {
     const ex = state.exam;
@@ -1471,6 +1600,8 @@ function render() {
   if ($('#dlg-chart').open) renderChart();
   keepSeatInView();
   aimNewCards();
+  if (online.role === 'host') scheduleBroadcast();
+  renderOnlineButton();
 }
 
 // En pantallas angostas los puestos se desplazan: centra el puesto que juega o el elegido.
@@ -1490,6 +1621,7 @@ function keepSeatInView() {
 /** Un zapato nuevo y completo, sin pistas, tabla ni correcciones; la nota se ve al final. */
 function startExam() {
   if (state.phase !== 'betting') return;
+  if (online.role) return notice('El examen no está disponible en una mesa en línea.');
   if (!state.seats.some((s) => isHumanSeat(s))) return notice('Siéntate en un puesto para hacer el examen.');
   const humans = state.players.filter((p) => !p.isBot);
   state.exam = { decisions: 0, correct: 0, misses: [], rounds: 0, startNet: new Map(humans.map((p) => [p.id, netOf(p)])) };
@@ -1901,7 +2033,7 @@ function renderProgress() {
     <h3>Examen</h3>
     <p class="muted small">Juega un zapato completo sin pistas, tabla ni correcciones. Al salir la carta de corte ves tu nota y tus errores.</p>
     <div class="btn-row">
-      <button class="btn primary small" data-action="start-exam" ${state.phase === 'betting' && !state.exam ? '' : 'disabled'}>${state.exam ? 'Examen en curso' : 'Empezar examen'}</button>
+      <button class="btn primary small" data-action="start-exam" ${state.phase === 'betting' && !state.exam && !online.role ? '' : 'disabled'}>${state.exam ? 'Examen en curso' : online.role ? 'No disponible en línea' : 'Empezar examen'}</button>
       <span class="spacer"></span>
       <button class="btn ghost small danger" data-action="clear-log" ${state.log.length ? '' : 'disabled'}>Borrar historial</button>
     </div>`;
@@ -2167,28 +2299,39 @@ function openChart() {
 
 function renderPlayersForm() {
   const busy = state.phase !== 'betting';
+  const guest = online.role === 'guest';
   $('#players-list').innerHTML = state.players
-    .map(
-      (p) => `
-    <div class="pl-row" data-pid="${p.id}">
+    .map((p) => {
+      // En una sala, cada dispositivo edita solo sus jugadores; un invitado no edita nada aquí.
+      const locked = guest || !mine(p);
+      const off = busy || locked ? 'disabled' : '';
+      return `
+    <div class="pl-row" data-pid="${p.id}" ${locked ? 'data-locked' : ''}>
       <span class="dot" style="--c:${p.color}"></span>
-      <input class="pl-name" value="${esc(p.name)}" aria-label="Nombre" maxlength="18" autocomplete="off">
-      <label class="pl-bank"><span>Saldo</span><input type="number" min="0" step="5" inputmode="decimal" class="pl-bankroll" value="${Math.round(p.bankroll * 100) / 100}" ${busy ? 'disabled' : ''}></label>
-      <label class="pl-bot"><input type="checkbox" class="pl-isbot" ${p.isBot ? 'checked' : ''} ${busy ? 'disabled' : ''}> Bot</label>
+      <input class="pl-name" value="${esc(p.name)}" aria-label="Nombre" maxlength="18" autocomplete="off" ${locked ? 'disabled' : ''}>
+      <label class="pl-bank"><span>Saldo</span><input type="number" min="0" step="5" inputmode="decimal" class="pl-bankroll" value="${Math.round(p.bankroll * 100) / 100}" ${off}></label>
+      <label class="pl-bot"><input type="checkbox" class="pl-isbot" ${p.isBot ? 'checked' : ''} ${off}> Bot</label>
       <div class="pl-actions">
-        <button class="btn ghost small" data-action="reset-stats" data-pid="${p.id}">Reiniciar estadísticas</button>
-        <button class="btn ghost small danger" data-action="del-player" data-pid="${p.id}" ${busy || state.players.length <= 1 ? 'disabled' : ''}>Eliminar</button>
+        <button class="btn ghost small" data-action="reset-stats" data-pid="${p.id}" ${locked ? 'disabled' : ''}>Reiniciar estadísticas</button>
+        <button class="btn ghost small danger" data-action="del-player" data-pid="${p.id}" ${off || state.players.length <= 1 ? 'disabled' : ''}>Eliminar</button>
       </div>
-    </div>`,
-    )
+    </div>`;
+    })
     .join('');
-  $('#players-busy').hidden = !busy;
+  $('#players-busy').hidden = !busy && !guest;
+  $('#players-busy').textContent = guest
+    ? 'Estás en una sala en línea: los jugadores los maneja quien la creó.'
+    : 'Hay una ronda en curso. El saldo y el tipo de jugador se cambian entre rondas.';
+  document.querySelectorAll('#dlg-players [data-action=add-player], #dlg-players [data-action=add-bot]').forEach((b) => {
+    b.disabled = guest;
+  });
 }
 
 function readPlayersForm() {
+  if (online.role === 'guest') return;
   document.querySelectorAll('.pl-row').forEach((row) => {
     const p = getPlayer(row.dataset.pid);
-    if (!p) return;
+    if (!p || row.hasAttribute('data-locked')) return;
     p.name = row.querySelector('.pl-name').value.trim() || p.name;
     if (state.phase === 'betting') {
       const b = Number(row.querySelector('.pl-bankroll').value);
@@ -2220,10 +2363,17 @@ function fillRules() {
     else input.value = String(S()[k]);
   }
   const busy = state.phase !== 'betting';
+  const guest = online.role === 'guest';
   f.querySelectorAll('[data-round-lock]').forEach((el) => {
-    el.disabled = busy;
+    el.disabled = busy || guest;
   });
-  $('#rules-busy').hidden = !busy;
+  ['decisionTime', 'speed'].forEach((k) => {
+    f.elements[k].disabled = guest;
+  });
+  $('#rules-busy').hidden = !busy && !guest;
+  $('#rules-busy').textContent = guest
+    ? 'Estás en una sala en línea: las reglas de la mesa las pone quien la creó. Aquí solo cambias tu sonido y tu práctica.'
+    : 'Hay una ronda en curso. Las reglas de la mesa se cambian entre rondas.';
   f.elements.voice.disabled = !sfx.hasVoice();
   syncPeekField();
 }
@@ -2274,11 +2424,532 @@ function applyProfile(name) {
   syncPeekField();
 }
 
+/* ───────────────────────── Mesa en línea ───────────────────────── */
+// El anfitrión corre el juego completo y manda el estado de la mesa a los invitados.
+// Los invitados dibujan ese estado y mandan sus intenciones (apostar, sentarse, jugar);
+// el anfitrión las aplica solo sobre los puestos de quien las manda.
+
+const TABLE_KEYS = ['decks', 'h17', 'das', 'surrender', 'maxHands', 'resplitAces', 'hitSplitAces', 'bjPays', 'peek', 'noPeekLoss', 'minBet', 'maxBet', 'penetration', 'decisionTime', 'sideBets', 'speed'];
+const PREF_KEYS = ['showHint', 'feedback', 'showCount', 'sound', 'volume', 'feedbackSound', 'voice'];
+
+function guestSend(msg) {
+  if (online.role !== 'guest') return false;
+  if (!online.closed) net.send(online.hostConn, msg);
+  return true;
+}
+
+function broadcast(msg) {
+  for (const g of online.conns.values()) net.send(g.conn, msg);
+}
+
+// Varios render() seguidos en el mismo paso mandan una sola foto de la mesa. Se usa una
+// microtarea y no un temporizador porque en una pestaña de fondo los temporizadores se retrasan.
+let broadcastQueued = false;
+function scheduleBroadcast() {
+  if (broadcastQueued) return;
+  broadcastQueued = true;
+  queueMicrotask(() => {
+    broadcastQueued = false;
+    if (online.role === 'host' && online.conns.size) broadcast(snapshot());
+  });
+}
+
+/** El estado de la mesa para los invitados. La carta oculta del crupier no se manda. */
+function snapshot() {
+  const card = (c) => ({ rank: c.rank, suit: c.suit, id: c.id });
+  const now = performance.now();
+  const pend = state.pending;
+  const msg = {
+    t: 'state',
+    code: online.code,
+    settings: Object.fromEntries(TABLE_KEYS.map((k) => [k, state.settings[k]])),
+    players: state.players.map((p) => ({
+      id: p.id, name: p.name, color: p.color, isBot: p.isBot, bankroll: p.bankroll, startBankroll: p.startBankroll,
+      rebuys: p.rebuys || 0, stats: p.stats, owner: ownerOf(p), away: !!p.away,
+    })),
+    seats: state.seats.map((s) => ({
+      playerId: s.playerId, bet: s.bet, lastBet: s.lastBet, side: s.side, sideStake: s.sideStake || null, sideResult: s.sideResult || null,
+      hands: s.hands.map((h) => ({ ...h, cards: h.cards.map(card) })),
+    })),
+    dealer: {
+      hidden: state.dealer.hidden,
+      cards: state.dealer.cards.map((c, i) => (i === 1 && state.dealer.hidden ? { rank: '?', suit: '?', id: c.id } : card(c))),
+    },
+    phase: state.phase,
+    turn: state.turn,
+    pending: pend
+      ? { kind: pend.kind || null, o: pend.o || null, rec: pend.rec || null, cost: pend.cost || 0, ms: pend.ms || 0, remaining: pend.ms ? Math.max(0, pend.ms - (now - pend.started)) : 0 }
+      : null,
+    summary: state.summary,
+    event: state.event && state.event.until > Date.now() ? { text: state.event.text, remaining: state.event.until - Date.now() } : null,
+    shoe: { left: state.shoe.length, size: state.shoeSize },
+    rc: state.runningCount,
+    needShuffle: state.needShuffle,
+    ready: [...online.ready],
+  };
+  // La gráfica solo viaja cuando cambia.
+  if (state.history.length !== online.sentHistory) {
+    msg.history = state.history;
+    online.sentHistory = state.history.length;
+  }
+  return msg;
+}
+
+async function startHosting() {
+  if (state.phase !== 'betting') {
+    online.error = 'Espera a que termine la ronda para crear la sala.';
+    return renderOnline();
+  }
+  online.status = 'Creando la sala…';
+  online.error = '';
+  renderOnline();
+  try {
+    const { code, peer } = await net.host({
+      onJoin: () => {},
+      onData: onGuestData,
+      onLeave: onGuestLeave,
+      onError: (text) => {
+        online.error = text;
+        renderOnline();
+      },
+    });
+    online.role = 'host';
+    online.myId = 'host';
+    online.code = code;
+    online.peer = peer;
+    state.players.forEach((p) => {
+      p.owner = 'host';
+    });
+    online.status = '';
+    render();
+    renderOnline();
+  } catch (e) {
+    online.status = '';
+    online.error = e.message;
+    renderOnline();
+  }
+}
+
+function welcomeGuest(conn, msg) {
+  if (online.conns.has(conn.peer)) return;
+  const name = String(msg.name || '').trim().slice(0, 18) || 'Invitado';
+  const key = name.toLowerCase();
+  // Quien vuelve con el mismo nombre (por ejemplo, tras perder la conexión) recupera sus puestos y su saldo.
+  let p = state.players.find((q) => !q.isBot && ownerOf(q) !== 'host' && q.name.toLowerCase() === key);
+  const returning = !!p || online.left.has(key);
+  if (p) {
+    for (const [id, g] of online.conns) {
+      if (g.pid !== p.id) continue;
+      online.conns.delete(id);
+      online.ready.delete(id);
+      try {
+        g.conn.close();
+      } catch {
+        /* ya estaba cerrada */
+      }
+    }
+    p.away = false;
+  } else {
+    const bankroll = Math.max(0, Math.min(1e9, Number(msg.bankroll) || 1000));
+    p = newPlayer(name, false, state.players.length, bankroll);
+    const back = online.left.get(key);
+    if (back) Object.assign(p, back);
+    online.left.delete(key);
+    state.players.push(p);
+  }
+  p.owner = conn.peer;
+  online.conns.set(conn.peer, { conn, pid: p.id, name });
+  seatGuest(p);
+  tableEvent(`${name} ${returning ? 'volvió a' : 'se unió a'} la mesa`, 3500);
+  net.send(conn, { t: 'welcome', pid: p.id, code: online.code });
+  online.sentHistory = -1;
+  render();
+  renderOnline();
+}
+
+/** Sienta a un invitado en el puesto libre más central, entre rondas. */
+function seatGuest(p) {
+  if (!p || p.away || state.phase !== 'betting' || state.seats.some((s) => s.playerId === p.id)) return;
+  const si = [3, 2, 4, 1, 5, 0, 6].find((i) => !state.seats[i].playerId);
+  if (si === undefined) return;
+  const prevActor = online.actingFor;
+  const prevSeat = state.selectedSeat;
+  online.actingFor = p.owner;
+  sit(si, p.id);
+  online.actingFor = prevActor;
+  state.selectedSeat = prevSeat;
+  pickSelectedSeat();
+}
+
+/** Aplica la intención de un invitado como si él la hiciera en su puesto. */
+function asGuest(conn, si, fn) {
+  const prevSeat = state.selectedSeat;
+  const prevNotice = state.notice;
+  online.actingFor = conn.peer;
+  if (si !== null) state.selectedSeat = si;
+  state.notice = '';
+  try {
+    fn();
+  } finally {
+    const note = state.notice;
+    online.actingFor = null;
+    state.selectedSeat = prevSeat;
+    state.notice = prevNotice;
+    if (note) net.send(conn, { t: 'notice', text: note });
+    render();
+  }
+}
+
+function onGuestData(conn, msg) {
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.t === 'hello') return welcomeGuest(conn, msg);
+  const g = online.conns.get(conn.peer);
+  if (!g) return;
+  const seatOf = (si) => (Number.isInteger(si) && si >= 0 && si < SEATS ? si : null);
+  switch (msg.t) {
+    case 'chip':
+      return asGuest(conn, seatOf(msg.si), () => addChip(Math.max(0, Number(msg.v) || 0)));
+    case 'double':
+      return asGuest(conn, seatOf(msg.si), () => {
+        const seat = state.seats[state.selectedSeat];
+        if (isMySeat(seat)) addChip(seat.bet || S().minBet, { double: true });
+      });
+    case 'set':
+      return asGuest(conn, seatOf(msg.si), () => setBet(msg.max ? Infinity : Number(msg.amount) || 0, { max: !!msg.max, cascade: !!msg.max }));
+    case 'side':
+      return asGuest(conn, seatOf(msg.si), () => addSide(msg.kind === 'pp' ? 'pp' : 't3', Math.max(0, Number(msg.v) || 0)));
+    case 'clear':
+      return asGuest(conn, seatOf(msg.si), clearBet);
+    case 'rebuy':
+      return asGuest(conn, seatOf(msg.si), rebuy);
+    case 'sit':
+      return asGuest(conn, null, () => seatOf(msg.si) !== null && sit(msg.si, g.pid));
+    case 'leave':
+      return asGuest(conn, null, () => seatOf(msg.si) !== null && sit(msg.si, null));
+    case 'deal':
+      return asGuest(conn, null, () => deal());
+    case 'act':
+      if (typeof msg.act === 'string') humanAct(msg.act, conn.peer);
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+function onGuestLeave(conn) {
+  const g = online.conns.get(conn.peer);
+  if (!g) return;
+  online.conns.delete(conn.peer);
+  online.ready.delete(conn.peer);
+  const p = getPlayer(g.pid);
+  if (p) {
+    p.away = true;
+    tableEvent(`${p.name} salió de la mesa`, 3500);
+    // Si le tocaba decidir, se juega su decisión honesta para no frenar la mesa.
+    if (state.pending && ownerOf(pendingPlayer()) === conn.peer) onDecisionTimeout();
+    if (state.phase === 'betting') removeAwayPlayers();
+  }
+  render();
+  renderOnline();
+}
+
+function removeAwayPlayers() {
+  const away = new Set(state.players.filter((p) => p.away).map((p) => p.id));
+  if (!away.size) return;
+  for (const p of state.players) {
+    if (!away.has(p.id)) continue;
+    const { id, color, bankroll, startBankroll, rebuys, stats } = p;
+    online.left.set(p.name.toLowerCase(), { id, color, bankroll, startBankroll, rebuys, stats });
+  }
+  for (const s of state.seats) {
+    if (away.has(s.playerId)) {
+      s.playerId = null;
+      s.bet = 0;
+      s.hands = [];
+      s.side = { pp: 0, t3: 0 };
+    }
+  }
+  state.players = state.players.filter((p) => !away.has(p.id));
+  pickSelectedSeat();
+}
+
+function closeRoom() {
+  if (state.phase !== 'betting') return;
+  broadcast({ t: 'bye' });
+  const peer = online.peer;
+  setTimeout(() => net.close(peer), 300);
+  state.players.forEach((p) => {
+    if (ownerOf(p) !== 'host') p.away = true;
+  });
+  removeAwayPlayers();
+  Object.assign(online, { role: null, myId: 'local', code: '', peer: null, error: '', status: '' });
+  online.conns.clear();
+  save();
+  render();
+  renderOnline();
+}
+
+async function joinRoom(code, name) {
+  code = net.cleanCode(code);
+  name = String(name || '').trim().slice(0, 18);
+  if (code.length !== 4) {
+    online.error = 'El código tiene 4 letras o números.';
+    return renderOnline();
+  }
+  if (!name) {
+    online.error = 'Escribe tu nombre para la mesa.';
+    return renderOnline();
+  }
+  if (state.phase !== 'betting') {
+    online.error = 'Termina la ronda antes de unirte a una sala.';
+    return renderOnline();
+  }
+  online.status = 'Conectando con la sala…';
+  online.error = '';
+  renderOnline();
+  try {
+    const me = state.players.find((p) => !p.isBot);
+    const { peer, conn, id } = await net.join(code, { name }, { onData: onHostData, onClose: hostClosed });
+    Object.assign(online, { role: 'guest', myId: id, peer, hostConn: conn, code, name, status: '', closed: false });
+    try {
+      localStorage.setItem(NAME_KEY, name);
+    } catch {
+      /* almacenamiento no disponible */
+    }
+    online.seen.clear();
+    online.flips.clear();
+    net.send(conn, { t: 'hello', name, bankroll: me ? me.bankroll : 1000 });
+    renderOnline();
+  } catch (e) {
+    online.status = '';
+    online.error = e.message;
+    renderOnline();
+  }
+}
+
+function onHostData(msg) {
+  if (!msg || typeof msg !== 'object') return;
+  switch (msg.t) {
+    case 'welcome':
+      online.pid = msg.pid;
+      tableEvent(`Te uniste a la sala ${online.code}`, 3500);
+      if ($('#dlg-online').open) $('#dlg-online').close();
+      break;
+    case 'state':
+      applySnapshot(msg);
+      break;
+    case 'fx':
+      if (SYNCED_FX.has(msg.k) && typeof sound[msg.k] === 'function') sound[msg.k](...(Array.isArray(msg.a) ? msg.a : []));
+      break;
+    case 'log':
+      receiveLog(msg.entry);
+      break;
+    case 'notice':
+      notice(String(msg.text || ''));
+      break;
+    case 'bye':
+      hostClosed(true);
+      break;
+    default:
+      break;
+  }
+}
+
+/** La corrección de una jugada propia: se muestra y se guarda en este dispositivo. */
+function receiveLog(entry) {
+  if (!entry || typeof entry !== 'object') return;
+  state.log.unshift(entry);
+  state.log = state.log.slice(0, LOG_MAX);
+  state.feedback = entry;
+  feedbackSound(!!entry.ok);
+  try {
+    const data = JSON.parse(localStorage.getItem(STORE) || 'null');
+    if (data) {
+      data.log = [entry, ...(data.log || [])].slice(0, LOG_MAX);
+      localStorage.setItem(STORE, JSON.stringify(data));
+    }
+  } catch {
+    /* almacenamiento no disponible */
+  }
+  render();
+}
+
+/** Un invitado guarda solo sus preferencias (sonido, pistas), no la mesa del anfitrión. */
+function saveLocalPrefs() {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORE) || 'null');
+    if (!data) return;
+    data.settings = { ...data.settings, ...Object.fromEntries(PREF_KEYS.map((k) => [k, state.settings[k]])) };
+    localStorage.setItem(STORE, JSON.stringify(data));
+  } catch {
+    /* almacenamiento no disponible */
+  }
+}
+
+function applySnapshot(m) {
+  // Al empezar otra ronda, el crupier recoge las cartas también en esta pantalla.
+  const hadCards = state.dealer.cards.length || state.seats.some((s) => s.hands.length);
+  if (online.sweeping) {
+    online.nextSnapshot = m;
+    return;
+  }
+  if (state.phase === 'betting' && m.phase !== 'betting' && hadCards) {
+    online.sweeping = true;
+    online.nextSnapshot = m;
+    sweepTable(true).then(() => {
+      online.sweeping = false;
+      const next = online.nextSnapshot;
+      online.nextSnapshot = null;
+      state.dealer = { cards: [], hidden: true };
+      state.seats.forEach((s) => {
+        s.hands = [];
+      });
+      if (next) applySnapshot(next);
+    });
+    return;
+  }
+  const now = performance.now();
+  const stamp = (c) => {
+    if (!online.seen.has(c.id)) online.seen.set(c.id, now);
+    c.at = online.seen.get(c.id);
+    if (online.flips.has(c.id)) c.flipAt = online.flips.get(c.id);
+    return c;
+  };
+  const wasHidden = state.dealer.hidden && state.dealer.cards.length > 1;
+  Object.assign(state.settings, m.settings);
+  state.players = m.players;
+  state.seats = m.seats.map((s) => ({
+    ...s,
+    side: s.side || { pp: 0, t3: 0 },
+    hands: s.hands.map((h) => ({ ...h, cards: h.cards.map(stamp) })),
+  }));
+  if (wasHidden && !m.dealer.hidden && m.dealer.cards[1]) online.flips.set(m.dealer.cards[1].id, now);
+  state.dealer = { hidden: m.dealer.hidden, cards: m.dealer.cards.map(stamp) };
+  state.phase = m.phase;
+  state.turn = m.turn;
+  state.pending = m.pending ? { ...m.pending, started: now - (m.pending.ms - m.pending.remaining) } : null;
+  state.summary = m.summary;
+  state.event = m.event ? { text: m.event.text, until: Date.now() + m.event.remaining } : null;
+  state.shoe = { length: m.shoe.left };
+  state.shoeSize = m.shoe.size;
+  state.runningCount = m.rc;
+  state.needShuffle = m.needShuffle;
+  online.ready = new Set(m.ready || []);
+  if (m.history) state.history = m.history;
+  const turnKey = `${JSON.stringify(m.turn)}|${m.pending ? m.pending.kind : ''}`;
+  if (turnKey !== online.turnKey) {
+    state.hintShown = false;
+    online.turnKey = turnKey;
+  }
+  if (state.phase === 'betting') state.notice = state.notice || '';
+  pickSelectedSeat();
+  renderPrint.key = '';
+  render();
+}
+
+function hostClosed(byHost = false) {
+  if (online.role !== 'guest' || online.closed) return;
+  online.closed = byHost ? 'bye' : 'lost';
+  renderOnline();
+  renderOnlineButton();
+  if (!$('#dlg-online').open) openDialog('#dlg-online');
+}
+
+/** Salir de la sala: se vuelve a la mesa propia guardada en este dispositivo. */
+function leaveRoom() {
+  net.close(online.peer);
+  location.href = location.pathname;
+}
+
+function renderOnlineButton() {
+  const b = $('#online-btn');
+  if (!b) return;
+  const on = !!online.role && !online.closed;
+  b.classList.toggle('on', on);
+  b.setAttribute('aria-pressed', String(on));
+  b.title = on ? `Mesa en línea: sala ${online.code}` : 'Mesa en línea';
+}
+
+function renderOnline() {
+  const el = $('#online-body');
+  const err = online.error ? `<p class="notice" role="alert">${esc(online.error)}</p>` : '';
+  const status = online.status ? `<p class="muted">${esc(online.status)}</p>` : '';
+  if (online.role === 'host') {
+    const link = `${location.origin}${location.pathname}?sala=${online.code}`;
+    const guests = [...online.conns.values()]
+      .map((g) => {
+        const p = getPlayer(g.pid);
+        return `<li><span class="dot" style="--c:${p ? p.color : '#888'}"></span><span class="grow">${esc(g.name)}</span><span class="num">${p ? fmt(p.bankroll) : ''}</span></li>`;
+      })
+      .join('');
+    el.innerHTML = `
+      <p class="muted">Comparte el código o el enlace. Cada quien juega desde su dispositivo. Tu navegador reparte las cartas: mantén esta pestaña abierta mientras juegan.</p>
+      <div class="room-code"><span>Código de la sala</span><strong>${online.code}</strong></div>
+      <div class="link-row"><input id="room-link" readonly value="${esc(link)}" aria-label="Enlace para invitar"><button class="btn ghost small" data-action="copy-link">Copiar enlace</button>${navigator.share ? '<button class="btn ghost small" data-action="share-link">Compartir</button>' : ''}</div>
+      <h3>Conectados (${online.conns.size})</h3>
+      ${guests ? `<ul class="list">${guests}</ul>` : '<p class="empty-note">Todavía no se ha unido nadie.</p>'}
+      ${err}
+      <div class="btn-row"><span class="muted small">${state.phase === 'betting' ? '' : 'La sala se puede cerrar entre rondas.'}</span><span class="spacer"></span><button class="btn ghost danger" data-action="close-room" ${state.phase === 'betting' ? '' : 'disabled'}>Cerrar la sala</button></div>`;
+    return;
+  }
+  if (online.role === 'guest') {
+    el.innerHTML = online.closed === 'bye'
+      ? `<p>Quien creó la sala la cerró.</p>
+         <div class="btn-row"><span class="spacer"></span><button class="btn primary" data-action="leave-room">Volver a mi mesa</button></div>`
+      : online.closed
+      ? `<p>Se perdió la conexión con la sala ${online.code}.</p>
+         <p class="muted small">Si vuelves a entrar con el mismo nombre, recuperas tus puestos y tu saldo.</p>
+         <div class="btn-row"><button class="btn ghost" data-action="leave-room">Volver a mi mesa</button><span class="spacer"></span><button class="btn primary" data-action="rejoin-room">Volver a entrar</button></div>`
+      : `<p>Estás en la sala <b>${online.code}</b> como <b>${esc(online.name)}</b>.</p>
+         <p class="muted small">Las reglas y los bots los maneja quien creó la sala. Tus correcciones y tu repaso de errores se guardan en este dispositivo.</p>
+         ${status}${err}
+         <div class="btn-row"><span class="spacer"></span><button class="btn ghost danger" data-action="leave-room">Salir de la sala</button></div>`;
+    return;
+  }
+  const code = net.cleanCode(new URLSearchParams(location.search).get('sala') || '');
+  const me = state.players.find((p) => !p.isBot);
+  let lastName = '';
+  try {
+    lastName = localStorage.getItem(NAME_KEY) || '';
+  } catch {
+    /* almacenamiento no disponible */
+  }
+  el.innerHTML = `
+    <p class="muted">Jueguen en la misma mesa, cada uno desde su dispositivo, sin crear cuentas.</p>
+    <h3>Unirme a una sala</h3>
+    <form class="join-form" id="join-form" onsubmit="return false">
+      <label>Código <input name="code" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${code}" placeholder="ABCD"></label>
+      <label>Tu nombre <input name="name" maxlength="18" autocomplete="nickname" value="${esc(lastName || (me ? me.name : ''))}"></label>
+      <button class="btn primary" data-action="join-room" ${online.status ? 'disabled' : ''}>Unirme</button>
+    </form>
+    <h3>Crear una sala</h3>
+    <p class="muted small">Tu navegador reparte las cartas con tus reglas y tus bots. Mantén la pestaña abierta mientras juegan.</p>
+    <div class="btn-row"><button class="btn ${code ? 'ghost' : 'primary'}" data-action="host-room" ${online.status ? 'disabled' : ''}>Crear sala</button></div>
+    ${status}${err}
+    <p class="muted small">Para encontrarse, los navegadores usan el servicio público gratuito de PeerJS. Las cartas y las apuestas viajan directo entre ustedes.</p>`;
+}
+
 /* ───────────────────────── Eventos ───────────────────────── */
 
-function clearBet() {
+function rebuy() {
+  if (state.phase !== 'betting') return;
+  if (guestSend({ t: 'rebuy', si: state.selectedSeat })) return;
+  // Recargar cuenta como recompra: el resultado neto la descuenta.
   const seat = state.seats[state.selectedSeat];
-  if (state.phase === 'betting' && isHumanSeat(seat)) {
+  const p = isMySeat(seat) && getPlayer(seat.playerId);
+  if (!p) return;
+  p.bankroll += p.startBankroll || 1000;
+  p.rebuys = (p.rebuys || 0) + 1;
+  state.notice = '';
+  sfx.payout(panFor(state.selectedSeat));
+  save();
+  render();
+}
+
+function clearBet() {
+  if (state.phase === 'betting' && guestSend({ t: 'clear', si: state.selectedSeat })) return;
+  const seat = state.seats[state.selectedSeat];
+  if (state.phase === 'betting' && isMySeat(seat)) {
     if (seat.bet || seat.side.pp || seat.side.t3) sfx.collect(panFor(state.selectedSeat));
     seat.bet = 0;
     seat.side = { pp: 0, t3: 0 };
@@ -2308,32 +2979,22 @@ document.addEventListener('click', (e) => {
     case 'clear-bet':
       clearBet();
       break;
-    case 'rebuy': {
-      // Recargar cuenta como recompra: el resultado neto la descuenta.
-      const seat = state.seats[state.selectedSeat];
-      const p = isHumanSeat(seat) && getPlayer(seat.playerId);
-      if (!p || state.phase !== 'betting') break;
-      p.bankroll += p.startBankroll || 1000;
-      p.rebuys = (p.rebuys || 0) + 1;
-      state.notice = '';
-      sfx.payout(panFor(state.selectedSeat));
-      save();
-      render();
+    case 'rebuy':
+      rebuy();
       break;
-    }
     case 'max-bet': {
       const seat = state.seats[state.selectedSeat];
-      if (isHumanSeat(seat)) setBet(Infinity, { cascade: true, max: true });
+      if (isMySeat(seat)) setBet(Infinity, { cascade: true, max: true });
       break;
     }
     case 'double-bet': {
       const seat = state.seats[state.selectedSeat];
-      if (isHumanSeat(seat)) addChip(seat.bet || S().minBet, { double: true });
+      if (isMySeat(seat)) addChip(seat.bet || S().minBet, { double: true });
       break;
     }
     case 'side-bet': {
       const si = Number(el.dataset.seat);
-      if (state.phase !== 'betting' || !isHumanSeat(state.seats[si])) break;
+      if (state.phase !== 'betting' || !isMySeat(state.seats[si])) break;
       state.selectedSeat = si;
       addSide(el.dataset.side, activeChip());
       break;
@@ -2341,7 +3002,7 @@ document.addEventListener('click', (e) => {
     case 'select-seat': {
       // Tocar un círculo propio pone ahí la ficha marcada, como en las mesas en vivo.
       const si = Number(el.dataset.seat);
-      if (state.phase !== 'betting' || !isHumanSeat(state.seats[si])) break;
+      if (state.phase !== 'betting' || !isMySeat(state.seats[si])) break;
       state.selectedSeat = si;
       state.notice = '';
       addChip(activeChip());
@@ -2496,10 +3157,58 @@ document.addEventListener('click', (e) => {
       applySound();
       renderSoundButton();
       renderPrint.key = '';
+      if (online.role === 'guest') saveLocalPrefs();
       save();
       $('#dlg-rules').close();
       render();
       break;
+    case 'open-online':
+      online.error = online.closed ? online.error : '';
+      renderOnline();
+      openDialog('#dlg-online');
+      break;
+    case 'host-room':
+      startHosting();
+      break;
+    case 'join-room': {
+      e.preventDefault(); // el formulario no se envía: se conecta desde aquí
+      const f = $('#join-form');
+      joinRoom(f.elements.code.value, f.elements.name.value);
+      break;
+    }
+    case 'copy-link': {
+      const input = $('#room-link');
+      const done = () => {
+        el.textContent = 'Enlace copiado';
+        setTimeout(() => {
+          el.textContent = 'Copiar enlace';
+        }, 1800);
+      };
+      if (navigator.clipboard) navigator.clipboard.writeText(input.value).then(done, () => input.select());
+      else input.select();
+      break;
+    }
+    case 'share-link':
+      navigator
+        .share({ title: 'Mesa 21', text: `Únete a mi mesa de blackjack. Sala ${online.code}`, url: $('#room-link').value })
+        .catch(() => {
+          /* se canceló */
+        });
+      break;
+    case 'close-room':
+      closeRoom();
+      break;
+    case 'leave-room':
+      leaveRoom();
+      break;
+    case 'rejoin-room': {
+      // Se recarga con el código puesto; el nombre ya queda escrito.
+      const q = new URLSearchParams(location.search);
+      q.set('sala', online.code);
+      net.close(online.peer);
+      location.href = `${location.pathname}?${q}`;
+      break;
+    }
     case 'install':
       if (installPrompt) {
         installPrompt.prompt();
@@ -2520,7 +3229,7 @@ document.addEventListener('click', (e) => {
       el.closest('dialog').close();
       break;
     case 'reset-all':
-      if (state.phase === 'betting' && confirm('¿Borrar jugadores, saldos, estadísticas y reglas guardadas?')) {
+      if (!online.role && state.phase === 'betting' && confirm('¿Borrar jugadores, saldos, estadísticas y reglas guardadas?')) {
         try {
           localStorage.removeItem(STORE);
         } catch {
@@ -2647,6 +3356,14 @@ applySound();
 renderSoundButton();
 buildShoe();
 render();
+if (new URLSearchParams(location.search).has('sala')) {
+  renderOnline();
+  openDialog('#dlg-online');
+}
+// Al cerrar la pestaña del anfitrión, los invitados reciben el aviso.
+addEventListener('pagehide', () => {
+  if (online.role === 'host') broadcast({ t: 'bye' });
+});
 let resizeTimer = 0;
 addEventListener('resize', () => {
   clearTimeout(resizeTimer);
@@ -2680,4 +3397,4 @@ if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) {
 }
 
 // Solo para pruebas: ?debug expone el estado en la consola.
-if (new URLSearchParams(location.search).has('debug')) window.mesa21 = { state, render, buildShoe, drill };
+if (new URLSearchParams(location.search).has('debug')) window.mesa21 = { state, render, buildShoe, drill, online };

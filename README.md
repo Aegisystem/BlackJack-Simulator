@@ -26,6 +26,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Tiempo para decidir** opcional (10 a 30 segundos), como en vivo. Si se acaba, se pide con 11 o menos y se planta con 12 o más.
 - **Apuestas laterales** opcionales (Pares Perfectos y 21+3) con los pagos de las mesas de Pragmatic Play. Se resuelven al repartir y el entrenador muestra cuánto gana la casa con ellas, calculado exacto según el número de mazos (por ejemplo 4,1 % y 3,7 % con 8 mazos).
 - **Reglas configurables**: de 1 a 8 mazos, carta de corte (aleatoria o fija), S17 o H17, doblar después de dividir, rendición tardía, pago del blackjack (3 a 2 o 6 a 5), si el crupier revisa su carta con figura y apuestas mínima y máxima.
+- **Mesa en línea**: jueguen en la misma mesa desde varios dispositivos, sin crear cuentas. Quien crea la sala comparte un código de 4 letras o un enlace. Su navegador reparte las cartas con sus reglas y sus bots, y cada quien juega sus puestos desde su teléfono o computador. Se reparte cuando todos los que apostaron pulsan «Repartir» (quien creó la sala puede repartir sin esperar). Si alguien pierde la conexión y vuelve a entrar con el mismo nombre, recupera sus puestos y su saldo. Las correcciones y el repaso de errores se guardan en el dispositivo de cada uno.
 - **Se instala como app** en el celular o el computador y funciona sin internet (service worker). En iPhone: Compartir → «Agregar a inicio».
 - Los saldos, las estadísticas y las reglas se guardan en el navegador (`localStorage`).
 
@@ -56,6 +57,14 @@ python3 -m http.server 8000
 
 Luego abre <http://localhost:8000>.
 
+Para probar la mesa en línea en un solo computador, abre dos pestañas con `?localnet` en la dirección (por ejemplo <http://localhost:8000/?localnet>). En ese modo las pestañas se comunican entre sí dentro del navegador, sin internet.
+
+## Cómo funciona la mesa en línea
+
+Los navegadores se encuentran con el servicio público y gratuito de [PeerJS](https://peerjs.com). Después, las apuestas, las cartas y las jugadas viajan directo entre los dispositivos (WebRTC). El navegador de quien crea la sala reparte: debe quedarse con la pestaña abierta mientras juegan. La carta oculta del crupier no se envía a los demás hasta que se voltea.
+
+La conexión directa funciona en la mayoría de las redes de casa y en la misma Wi‑Fi. Algunas redes la bloquean (ciertos datos móviles o redes de empresa). En ese caso hace falta un servidor TURN que retransmita los datos, y este proyecto no trae ninguno.
+
 ## Pruebas
 
 La estrategia se compara casilla por casilla con las tablas publicadas de Wizard of Odds (4 a 8 mazos con S17 y H17, sin doblar tras dividir, sin rendición y la variante europea sin carta oculta). Requiere Node 18 o más reciente:
@@ -83,6 +92,7 @@ css/styles.css    Estilos de la mesa
 js/strategy.js    Estrategia básica (funciones puras)
 js/app.js         Juego, bots, interfaz y guardado
 js/sound.js       Sonidos y voz del crupier
+js/online.js      Conexión de la mesa en línea (PeerJS y prueba local)
 tests/            Pruebas de la estrategia (node --test)
 sounds/           Grabaciones de cartas y fichas (MP3)
 icons/            Iconos de la app

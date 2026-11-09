@@ -42,6 +42,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16M6.5 16v-5M11.5 16V6.5M16.5 16v-7.5"/></svg>
           <span>Progreso</span>
         </button>
+        <button class="tb" id="online-btn" data-action="open-online" aria-pressed="false" title="Mesa en línea">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="6" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M8.4 10.8l7.2-3.6M8.4 13.2l7.2 3.6"/></svg>
+          <span>En línea</span>
+        </button>
         <button class="tb" data-action="open-players" title="Jugadores y saldos">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.8 19.5c.8-3.2 3.3-5 6.2-5s5.4 1.8 6.2 5"/><path d="M15.5 5.2a3.3 3.3 0 0 1 0 6.6M17.6 14.8c1.9.6 3.1 2.2 3.6 4.7"/></svg>
           <span>Jugadores</span>
@@ -124,6 +128,15 @@
       <button class="x" data-action="close" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
     </div>
     <div id="progress-body" class="progress"></div>
+  </dialog>
+
+  <!-- Mesa en línea -->
+  <dialog id="dlg-online" class="dlg" aria-labelledby="t-online">
+    <div class="dlg-head">
+      <h2 id="t-online">Mesa en línea</h2>
+      <button class="x" data-action="close" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+    </div>
+    <div id="online-body" class="online"></div>
   </dialog>
 
   <!-- Resultado del examen -->

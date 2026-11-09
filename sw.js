@@ -1,7 +1,7 @@
 // Service worker de Mesa 21: guarda los archivos para poder jugar sin internet.
 // Los archivos propios se piden primero a la red (así siempre se ve la última versión)
 // y, si no hay conexión, se usan los guardados. Las fuentes se sirven desde el caché.
-const CACHE = 'mesa21-v1';
+const CACHE = 'mesa21-v2';
 const SOUNDS = [
   'card-place-1', 'card-place-2', 'card-place-3', 'card-place-4', 'card-shove-1', 'card-shove-2', 'card-shuffle',
   'card-slide-1', 'card-slide-2', 'card-slide-3', 'card-slide-4', 'card-slide-5', 'chip-lay-1', 'chip-lay-2', 'chip-lay-3',
@@ -9,7 +9,7 @@ const SOUNDS = [
   'chips-stack-1', 'chips-stack-2', 'chips-stack-3', 'chips-stack-4', 'chips-stack-5', 'chips-stack-6',
 ].map((n) => `sounds/${n}.mp3`);
 const FILES = [
-  './', 'index.html', 'css/styles.css', 'js/app.js', 'js/strategy.js', 'js/sound.js', 'manifest.webmanifest',
+  './', 'index.html', 'css/styles.css', 'js/app.js', 'js/strategy.js', 'js/sound.js', 'js/online.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png',
   ...SOUNDS,
 ];
