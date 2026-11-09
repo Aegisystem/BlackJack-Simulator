@@ -19,6 +19,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Conteo Hi-Lo** opcional (cuenta corrida y cuenta real).
 - **Sonido real**: grabaciones de cartas y fichas para el reparto, la carta del crupier al voltearse, las apuestas, los pagos, la recogida de fichas y la barajada. Cada puesto suena desde su lado en estéreo. También hay un tono opcional de acierto o error y una voz del crupier opcional (usa la voz del sistema).
 - **Animación de cartas**: salen del zapato, el crupier levanta y voltea su carta oculta, y al empezar cada ronda recoge las cartas de la anterior.
+- **Barajada a la vista**: con cada zapato nuevo (también al empezar la sesión) el crupier saca las cartas, hace tres riffles con las cartas cayendo intercaladas, empareja el mazo, mete la carta de corte amarilla a la altura del corte y lo carga en el zapato, con el sonido de la barajada sincronizado. En velocidad rápida hace un solo riffle. En una sala en línea todos la ven.
 - **Corte aleatorio**: por defecto, en cada barajada la carta de corte cae en un punto al azar entre el 45% y el 55% del zapato, para que no sepas cuándo se va a barajar.
 - **Ficha marcada**: tocas una ficha para marcarla y cada toque en tu círculo pone una de ese valor, como en las mesas en vivo. Las teclas `1` a `5` marcan la ficha y la apuestan.
 - **Apuestas rápidas**: las fichas se adaptan a la apuesta mínima de la mesa (con mínimo de 5.000 son 5k, 25k, 100k, 500k y 1M). También puedes escribir el monto exacto o usar «Máx» para apostar lo más posible.

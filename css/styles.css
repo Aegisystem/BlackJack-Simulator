@@ -225,6 +225,24 @@ kbd {
   color: var(--felt-ink-2);
 }
 
+/* Barajada: capa propia que render() no toca; app.js mueve cada carta (playShuffle). */
+.dealer.shuffling .card.ghost, .dealer.shuffling .dealer-label { visibility: hidden; }
+.shuffle-fx { position: absolute; left: 50%; top: 0; width: 0; height: 0; z-index: 5; pointer-events: none; }
+.shuffle-fx .sc {
+  position: absolute;
+  left: calc(var(--cw) * -.5); top: calc(var(--cw) * -.7);
+  width: var(--cw); height: calc(var(--cw) * 1.4);
+  border-radius: calc(var(--cw) * .1);
+  background: repeating-linear-gradient(45deg, #9b2a2a 0 4px, #7a1d1d 4px 8px);
+  /* La línea oscura de abajo separa las cartas: el montón se ve como el canto de un mazo. */
+  box-shadow: 0 1px 0 #00000059, 0 4px 9px -5px #0009, inset 0 0 0 3px var(--card), inset 0 0 0 4px #0002;
+  will-change: transform;
+}
+.shuffle-fx .sc.cut {
+  background: linear-gradient(160deg, #f4d35e, #dcab36);
+  box-shadow: 0 1px 0 #0000004d, inset 0 0 0 1px #00000026;
+}
+
 /* Centro del paño: impresión y letrero */
 .felt-mid {
   flex: 1;

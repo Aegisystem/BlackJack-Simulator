@@ -105,7 +105,7 @@ function out(pan) {
 }
 
 /** Reproduce una grabación concreta. Devuelve su duración, o 0 si no está disponible. */
-function playName(name, { pan = 0, delay = 0, gain = 1, rate = [0.94, 1.06] } = {}) {
+function playName(name, { pan = 0, delay = 0, gain = 1, rate = [0.94, 1.06], dur = 0 } = {}) {
   if (!ensure() || !buffers[name]) return 0;
   const src = ctx.createBufferSource();
   src.buffer = buffers[name];
@@ -113,8 +113,17 @@ function playName(name, { pan = 0, delay = 0, gain = 1, rate = [0.94, 1.06] } = 
   const g = ctx.createGain();
   g.gain.value = gain;
   src.connect(g).connect(out(pan));
-  src.start(at(delay));
-  return src.buffer.duration / src.playbackRate.value;
+  const t = at(delay);
+  src.start(t);
+  let len = src.buffer.duration / src.playbackRate.value;
+  // dur corta la grabación con un desvanecido corto (por ejemplo, una barajada más rápida).
+  if (dur && dur < len) {
+    g.gain.setValueAtTime(gain, t + Math.max(0, dur - 0.2));
+    g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    src.stop(t + dur + 0.02);
+    len = dur;
+  }
+  return len;
 }
 
 /** Reproduce una variante al azar del grupo, sin repetir la anterior. */
@@ -246,9 +255,9 @@ export function sweep(delay = 0) {
   play('shove', { delay, gain: 0.7 });
 }
 
-/** Barajada del zapato. Devuelve cuántos segundos dura. */
-export function shuffle(delay = 0) {
-  return play('shuffle', { delay, gain: 0.8, rate: [1.08, 1.08] });
+/** La barajada: varios riffles seguidos. rate cambia el ritmo y maxDur la corta antes de terminar. */
+export function shuffle(delay = 0, { rate = 1.08, maxDur = 0 } = {}) {
+  return play('shuffle', { delay, gain: 0.8, rate: [rate, rate], dur: maxDur });
 }
 
 /** Tono del entrenador cuando la jugada es correcta. */

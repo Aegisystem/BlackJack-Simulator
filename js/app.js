@@ -404,7 +404,7 @@ async function deal() {
   const shuffling = state.needShuffle || !state.shoe.length;
   if (shuffling) {
     buildShoe();
-    tableEvent('Barajando un zapato nuevo', 4000);
+    state.shuffling = true;
   }
 
   state.phase = 'dealing';
@@ -428,9 +428,13 @@ async function deal() {
   }
   render();
   if (shuffling) {
-    // Se espera a que termine el sonido de la barajada antes de repartir.
-    const secs = sfx.shuffle();
-    await new Promise((r) => setTimeout(r, secs ? secs * 1000 : delay(700)));
+    // El crupier baraja a la vista antes de repartir. En una sala, los invitados ven lo mismo
+    // (el aviso sale después de la foto de la mesa, que va en una microtarea).
+    const cut = state.shoeSize ? 1 - state.cutAt / state.shoeSize : 0.5;
+    if (online.role === 'host') queueMicrotask(() => broadcast({ t: 'shuffle', cut }));
+    await playShuffle(cut);
+    state.shuffling = false;
+    render();
   }
 
   for (let round = 0; round < 2; round++) {
@@ -1195,6 +1199,156 @@ function aimNewCards(root = document) {
   });
 }
 
+/* ───────────────────────── Barajada ───────────────────────── */
+// Con un zapato nuevo el crupier baraja a la vista: saca las cartas del zapato, hace riffles
+// (parte el mazo en dos y las cartas caen intercaladas), empareja el mazo, mete la carta de corte
+// a la altura del corte y lo vuelve a cargar. Cada carta se mueve con la Web Animations API en la
+// capa #shuffle-fx, que render() no toca. La coreografía se programa completa de una vez y el
+// juego espera con un temporizador, así no se frena aunque la pestaña quede de fondo.
+
+const SHUFFLE_N = 16; // cartas dibujadas; representan todo el zapato
+// Por velocidad (rápida, normal, lenta): sacar el mazo (A) y separación entre cartas (gap),
+// cada riffle (R) y cuántos, carta de corte (C), cargar el zapato (L) y ritmo del sonido.
+const SHUFFLE_TIMES = [
+  { A: 240, gap: 5, R: 620, riffles: 1, C: 260, L: 300, rate: 1.1 },
+  { A: 380, gap: 9, R: 820, riffles: 3, C: 420, L: 440, rate: 1.08 },
+  { A: 440, gap: 10, R: 1000, riffles: 3, C: 480, L: 480, rate: 1 },
+];
+const between = (a, b) => a + Math.random() * (b - a);
+const cssMove = (p) => `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) rotate(${(p.r || 0).toFixed(1)}deg) scale(${p.s ?? 1})`;
+
+/** Orden en que caen las cartas de un riffle: desde abajo de cada mitad, casi siempre alternando. */
+function riffleOrder(left, right) {
+  const out = [];
+  let i = 0;
+  let j = 0;
+  let side = Math.random() < 0.5 ? 0 : 1;
+  while (i < left.length || j < right.length) {
+    if (i >= left.length) side = 1;
+    else if (j >= right.length) side = 0;
+    out.push(side ? right[j++] : left[i++]);
+    if (Math.random() < 0.72) side ^= 1;
+  }
+  return out;
+}
+
+let shuffleToken = 0;
+/** Muestra la barajada y resuelve al terminar. cut: parte del zapato que sale antes de la carta de corte. */
+function playShuffle(cut = 0.5) {
+  const tm = SHUFFLE_TIMES[S().speed ?? 1] || SHUFFLE_TIMES[1];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const fx = $('#shuffle-fx');
+  const row = $('#dealer .cards');
+  const box = $('#shoe .shoe-box');
+  const felt = fx && fx.parentElement;
+  if (!fx || !row || !box || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    sound.shuffle(0, { rate: tm.rate, maxDur: 1.4 });
+    return sleep(1400);
+  }
+  const token = ++shuffleToken;
+  const fr = felt.getBoundingClientRect();
+  const rr = row.getBoundingClientRect();
+  const sb = box.getBoundingClientRect();
+  const W = ($('#dealer .card') || {}).offsetWidth || 59;
+  const n = SHUFFLE_N;
+  const t = Math.max(0.9, W * 0.022); // grosor de cada carta en el montón
+  // Centro del mazo: frente al crupier, con espacio arriba para que las cartas vuelen.
+  const cx = fr.width / 2;
+  const cy = Math.max(rr.top + rr.height / 2 - fr.top + W * 0.12, W * 0.86 + 7.5 * t + 4);
+  fx.style.left = `${cx}px`;
+  fx.style.top = `${cy}px`;
+  fx.style.setProperty('--cw', `${W}px`);
+  fx.textContent = '';
+  const make = (cls) => {
+    const el = document.createElement('div');
+    el.className = cls;
+    fx.append(el);
+    return el;
+  };
+  const cards = Array.from({ length: n }, () => make('sc'));
+  const cutEl = make('sc cut');
+
+  // Cada movimiento sigue desde donde terminó el anterior. La primera animación de cada carta
+  // mantiene su punto de partida mientras espera su turno (fill both); las demás, solo el final.
+  const pos = new Map();
+  const started = new Set();
+  const move = (el, to, at, dur, { via, easing = 'cubic-bezier(.25,.8,.3,1)', fade } = {}) => {
+    const frames = [{ transform: cssMove(pos.get(el)) }];
+    if (via) frames.push({ transform: cssMove(via), offset: 0.45 });
+    frames.push({ transform: cssMove(to) });
+    if (fade) frames.forEach((f, i) => (f.opacity = fade[0] + ((fade[1] - fade[0]) * i) / (frames.length - 1)));
+    el.animate(frames, { delay: at, duration: dur, easing, fill: started.has(el) ? 'forwards' : 'both' });
+    started.add(el);
+    pos.set(el, to);
+  };
+  const zAt = (el, z, at) => el.animate([{ zIndex: z }, { zIndex: z }], { delay: at, duration: 1, fill: 'forwards' });
+
+  const shoeAt = { x: sb.left + sb.width / 2 - fr.left - cx, y: sb.top + sb.height / 2 - fr.top - cy, r: -4, s: 0.45 };
+  const pileAt = (m) => ({ x: 0, y: ((n - 1) / 2 - m) * t, r: 0, s: 1 });
+
+  // 1. Saca las cartas del zapato y arma el mazo.
+  cards.forEach((el, i) => {
+    el.style.zIndex = String(10 + i);
+    pos.set(el, shoeAt);
+    move(el, pileAt(i), i * tm.gap, tm.A, { fade: [0, 1], easing: 'cubic-bezier(.2,.75,.25,1)' });
+  });
+  let T = tm.A + n * tm.gap + 60;
+  sound.shuffle(T / 1000, { rate: tm.rate, maxDur: (tm.riffles * tm.R) / 1000 + 0.25 });
+
+  // 2. Riffles: parte el mazo, las cartas caen intercaladas y lo empareja con un toque.
+  const half = n / 2;
+  const sx = W * 0.8;
+  const halfAt = (side, j) => ({ x: side ? sx : -sx, y: ((half - 1) / 2 - j) * t, r: side ? -8 : 8, s: 1 });
+  let order = cards.slice();
+  let zBase = 10;
+  for (let k = 0; k < tm.riffles; k++) {
+    const R = tm.R;
+    const left = order.slice(0, half);
+    const right = order.slice(half);
+    const split = R * 0.2;
+    left.forEach((el, j) => move(el, halfAt(0, j), T, split));
+    right.forEach((el, j) => move(el, halfAt(1, j), T + 16, split));
+    const drops = riffleOrder(left, right);
+    zBase = 100 * (k + 1);
+    const start = T + split + R * 0.04;
+    const gap = (R * 0.42) / n;
+    const fly = Math.max(110, R * 0.2);
+    drops.forEach((el, m) => {
+      zAt(el, zBase + 2 * m, T + split);
+      const from = pos.get(el);
+      const land = { x: between(-0.05, 0.05) * W, y: pileAt(m).y, r: between(-5, 5), s: 1 };
+      const via = { x: (from.x + land.x) / 2, y: Math.min(from.y, land.y) - W * 0.12, r: (from.r + land.r) / 2, s: 1.05 };
+      move(el, land, start + m * gap, fly, { via, easing: 'cubic-bezier(.3,.6,.35,1)' });
+    });
+    drops.forEach((el, m) => move(el, pileAt(m), T + R * 0.84, R * 0.14, { via: { ...pileAt(m), y: pileAt(m).y - 2 }, easing: 'ease-out' }));
+    order = drops;
+    T += R;
+  }
+
+  // 3. La carta de corte entra al mazo a la altura del corte.
+  const d = Math.min(n - 3, Math.max(3, Math.round(n * (1 - cut))));
+  const cutY = ((n - 1) / 2 - (d - 0.5)) * t;
+  cutEl.style.zIndex = String(zBase + 2 * d - 1);
+  pos.set(cutEl, { x: W * 1.6, y: cutY - W * 0.1, r: 14, s: 1 });
+  move(cutEl, { x: W * 0.32, y: cutY, r: 0, s: 1 }, T, tm.C * 0.7, { fade: [0, 1], easing: 'cubic-bezier(.2,.8,.2,1)' });
+  move(cutEl, { x: W * 0.2, y: cutY, r: 0, s: 1 }, T + tm.C * 0.72, tm.C * 0.28, { easing: 'ease-in-out' });
+  T += tm.C;
+
+  // 4. Carga el mazo en el zapato.
+  [...order, cutEl].forEach((el, i) => move(el, shoeAt, T + i * 6, tm.L, { fade: [1, 0], easing: 'cubic-bezier(.55,0,.7,.45)' }));
+  sound.sweep((T + tm.L * 0.7) / 1000);
+  setTimeout(() => {
+    const b = $('#shoe .shoe-box');
+    const base = 'perspective(240px) rotateX(16deg) rotate(-4deg)';
+    if (b) b.animate([{ transform: base }, { transform: `${base} scale(1.08)` }, { transform: base }], { duration: 260, easing: 'ease-out' });
+  }, T + tm.L * 0.85);
+  T += tm.L + n * 6 + 40;
+
+  return sleep(T).then(() => {
+    if (token === shuffleToken) fx.textContent = '';
+  });
+}
+
 /** El crupier recoge las cartas de la ronda anterior hacia su izquierda antes de repartir. */
 async function sweepTable(silent = false) {
   const els = [...document.querySelectorAll('#seats .card, #dealer .card:not(.ghost)')];
@@ -1264,6 +1418,7 @@ function renderDealer() {
     }
   }
   $('#dealer').innerHTML = `<div class="cards">${cards}</div><div class="dealer-label">${total}<span>Crupier</span></div>`;
+  $('#dealer').classList.toggle('shuffling', !!state.shuffling);
 }
 
 function bannerContent() {
@@ -1276,6 +1431,9 @@ function bannerContent() {
       sub: anyHuman ? 'Marca una ficha y toca tu círculo para apostar' : 'Siéntate en un puesto libre para jugar',
       note: state.exam ? 'Examen en curso: sin ayudas hasta la carta de corte' : state.needShuffle ? 'Se baraja antes de la próxima mano' : '',
     };
+  }
+  if (state.shuffling) {
+    return { title: 'Barajando', sub: `Zapato nuevo de ${S().decks} ${S().decks === 1 ? 'mazo' : 'mazos'}`, note: ev };
   }
   if (state.pending && state.pending.kind === 'insurance') {
     const p = pendingPlayer();
@@ -2485,6 +2643,7 @@ function snapshot() {
     shoe: { left: state.shoe.length, size: state.shoeSize },
     rc: state.runningCount,
     needShuffle: state.needShuffle,
+    shuffling: !!state.shuffling,
     ready: [...online.ready],
   };
   // La gráfica solo viaja cuando cambia.
@@ -2744,6 +2903,9 @@ function onHostData(msg) {
     case 'log':
       receiveLog(msg.entry);
       break;
+    case 'shuffle':
+      playShuffle(Math.min(1, Math.max(0, Number(msg.cut) || 0.5)));
+      break;
     case 'notice':
       notice(String(msg.text || ''));
       break;
@@ -2834,6 +2996,7 @@ function applySnapshot(m) {
   state.shoeSize = m.shoe.size;
   state.runningCount = m.rc;
   state.needShuffle = m.needShuffle;
+  state.shuffling = !!m.shuffling;
   online.ready = new Set(m.ready || []);
   if (m.history) state.history = m.history;
   const turnKey = `${JSON.stringify(m.turn)}|${m.pending ? m.pending.kind : ''}`;
@@ -3355,6 +3518,8 @@ load();
 applySound();
 renderSoundButton();
 buildShoe();
+// El primer reparto de la sesión muestra la barajada del zapato nuevo.
+state.needShuffle = true;
 render();
 if (new URLSearchParams(location.search).has('sala')) {
   renderOnline();
@@ -3397,4 +3562,4 @@ if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) {
 }
 
 // Solo para pruebas: ?debug expone el estado en la consola.
-if (new URLSearchParams(location.search).has('debug')) window.mesa21 = { state, render, buildShoe, drill, online };
+if (new URLSearchParams(location.search).has('debug')) window.mesa21 = { state, render, buildShoe, drill, online, playShuffle };
