@@ -12,7 +12,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Pistas** opcionales que muestran la jugada correcta antes de decidir.
 - **Seguro**: cuando el crupier muestra un As te ofrece seguro (paga 2 a 1), y te corrige si lo tomas.
 - **Práctica rápida**: manos sueltas para memorizar la tabla sin apostar, con aciertos y racha.
-- **Tus errores más comunes**: agrupa las situaciones en las que más te equivocas. El historial se guarda en el navegador.
+- **Progreso**: saldo, resultado y porcentaje de acierto de cada jugador, tus errores más comunes y las últimas decisiones. El historial se guarda en el navegador.
 - **Tabla de estrategia** (manos duras, suaves y parejas) que se ajusta a las reglas de la mesa y resalta la casilla de tu mano.
 - **Conteo Hi-Lo** opcional (cuenta corrida y cuenta real).
 - **Corte aleatorio**: por defecto, en cada barajada la carta de corte cae en un punto al azar entre el 45% y el 55% del zapato, para que no sepas cuándo se va a barajar.
@@ -24,6 +24,8 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 | Tecla | Acción |
 |---|---|
 | `Espacio` / `Enter` | Repartir |
+| `1` a `5` | Fichas de 5, 25, 100, 500 y 1000 |
+| `⌫` | Quitar la apuesta |
 | `H` | Pedir |
 | `S` | Plantarse |
 | `D` | Doblar |

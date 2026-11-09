@@ -2,113 +2,142 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1411">
   <title>Mesa 21 · Entrenador de Blackjack</title>
   <meta name="description" content="Simulador de blackjack para practicar estrategia básica: 7 puestos, varios jugadores, bots y divisiones de hasta 5 manos.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect x='10' y='6' width='40' height='52' rx='6' fill='%23f7f2e7' stroke='%23123' stroke-width='3'/><text x='30' y='42' font-size='26' text-anchor='middle' fill='%23b3261e' font-family='Georgia'>21</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect x='12' y='5' width='40' height='54' rx='6' fill='%23fbf8f1'/><text x='32' y='43' font-size='26' font-weight='700' text-anchor='middle' fill='%23b8322a' font-family='Georgia'>21</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,500;6..96,700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,500;6..96,700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">21</span>
-      <div>
-        <h1>Mesa 21</h1>
-        <p>Entrenador de estrategia básica</p>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">21</span>
+        <div class="brand-text">
+          <h1>Mesa 21</h1>
+          <p>Entrenador de estrategia básica</p>
+        </div>
       </div>
-    </div>
-    <nav class="top-actions">
-      <button class="btn ghost" data-action="drill">Práctica rápida</button>
-      <button class="btn ghost" data-action="chart">Tabla <kbd>T</kbd></button>
-      <button class="btn ghost" data-action="open-players">Jugadores</button>
-      <button class="btn ghost" data-action="open-rules">Reglas</button>
-    </nav>
-  </header>
+      <nav class="top-actions" aria-label="Herramientas">
+        <button class="tb" data-action="drill" title="Práctica rápida">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" class="fill"/></svg>
+          <span>Práctica</span>
+        </button>
+        <button class="tb" data-action="chart" title="Tabla de estrategia (T)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M3.5 9.2h17M3.5 14.8h17M9.2 3.5v17M14.8 3.5v17"/></svg>
+          <span>Tabla</span>
+        </button>
+        <button class="tb" data-action="open-progress" title="Progreso y errores">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16M6.5 16v-5M11.5 16V6.5M16.5 16v-7.5"/></svg>
+          <span>Progreso</span>
+        </button>
+        <button class="tb" data-action="open-players" title="Jugadores y saldos">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.8 19.5c.8-3.2 3.3-5 6.2-5s5.4 1.8 6.2 5"/><path d="M15.5 5.2a3.3 3.3 0 0 1 0 6.6M17.6 14.8c1.9.6 3.1 2.2 3.6 4.7"/></svg>
+          <span>Jugadores</span>
+        </button>
+        <button class="tb" data-action="open-rules" title="Reglas y práctica">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h9M18 7.5h2M4 16.5h2M11 16.5h9"/><circle cx="15.5" cy="7.5" r="2.3"/><circle cx="8.5" cy="16.5" r="2.3"/></svg>
+          <span>Reglas</span>
+        </button>
+      </nav>
+    </header>
 
-  <main>
-    <section class="table" aria-label="Mesa de blackjack">
-      <div class="rail">
+    <main class="stage" id="stage">
+      <section class="rail" aria-label="Mesa de blackjack">
         <div class="felt">
           <div class="shoe" id="shoe"></div>
           <div class="dealer" id="dealer"></div>
-          <div class="felt-rules" id="felt-rules"></div>
-          <div class="seats-scroll">
+          <div class="felt-mid">
+            <div class="felt-print" id="felt-print" aria-hidden="true"></div>
+            <div class="banner" id="banner" role="status" aria-live="polite"></div>
+          </div>
+          <div class="seats-scroll" id="seats-scroll">
             <div class="seats" id="seats"></div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </main>
 
-    <section class="console">
-      <div class="controls" id="controls" aria-live="polite"></div>
-      <div class="coach" id="coach" aria-live="polite"></div>
-    </section>
-
-    <section class="roster" id="roster" aria-label="Jugadores"></section>
-  </main>
+    <footer class="dock" aria-label="Controles">
+      <div class="dock-info" id="dock-info"></div>
+      <div class="dock-controls" id="controls"></div>
+      <aside class="dock-coach" id="coach" aria-live="polite"></aside>
+    </footer>
+  </div>
 
   <!-- Tabla de estrategia básica -->
-  <dialog id="dlg-chart" class="dlg wide">
+  <dialog id="dlg-chart" class="dlg wide" aria-labelledby="t-chart">
     <div class="dlg-head">
-      <h2>Estrategia básica</h2>
-      <button class="x" data-action="close" aria-label="Cerrar">×</button>
+      <h2 id="t-chart">Estrategia básica</h2>
+      <button class="x" data-action="close" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
     </div>
     <p class="muted" id="chart-rules"></p>
-    <div class="tabs" id="chart-tabs">
-      <button data-action="chart-tab" data-tab="hard">Duras</button>
-      <button data-action="chart-tab" data-tab="soft">Suaves</button>
-      <button data-action="chart-tab" data-tab="pairs">Parejas</button>
+    <div class="tabs" id="chart-tabs" role="tablist">
+      <button role="tab" data-action="chart-tab" data-tab="hard">Duras</button>
+      <button role="tab" data-action="chart-tab" data-tab="soft">Suaves</button>
+      <button role="tab" data-action="chart-tab" data-tab="pairs">Parejas</button>
     </div>
     <div class="chart-wrap" id="chart-table"></div>
     <div class="legend">
       <span><i class="k-H">H</i> Pedir</span>
       <span><i class="k-S">S</i> Plantarse</span>
-      <span><i class="k-D">D</i> Doblar (si no, pedir)</span>
-      <span><i class="k-Ds">Ds</i> Doblar (si no, plantarse)</span>
+      <span><i class="k-D">D</i> Doblar; si no se puede, pedir</span>
+      <span><i class="k-Ds">Ds</i> Doblar; si no se puede, plantarse</span>
       <span><i class="k-P">P</i> Dividir</span>
-      <span><i class="k-Rh">Rh</i> Rendirse (si no, pedir)</span>
-      <span><i class="k-Rs">Rs</i> Rendirse (si no, plantarse)</span>
-      <span><i class="k-Rp">Rp</i> Rendirse (si no, dividir)</span>
+      <span><i class="k-Rh">Rh</i> Rendirse; si no se puede, pedir</span>
+      <span><i class="k-Rs">Rs</i> Rendirse; si no se puede, plantarse</span>
+      <span><i class="k-Rp">Rp</i> Rendirse; si no se puede, dividir</span>
     </div>
-    <p class="muted small">La tabla se ajusta a las reglas de la mesa. Durante tu turno se resalta la casilla de tu mano. Nunca tomes seguro.</p>
+    <p class="muted small">La tabla se ajusta a las reglas de la mesa. Durante tu turno se marca la casilla de tu mano. Nunca tomes seguro.</p>
   </dialog>
 
   <!-- Práctica rápida -->
-  <dialog id="dlg-drill" class="dlg">
+  <dialog id="dlg-drill" class="dlg" aria-labelledby="t-drill">
     <div class="dlg-head">
-      <h2>Práctica rápida</h2>
-      <button class="x" data-action="close" aria-label="Cerrar">×</button>
+      <h2 id="t-drill">Práctica rápida</h2>
+      <button class="x" data-action="close" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
     </div>
-    <p class="muted">Manos sueltas para memorizar la tabla, sin apostar. Los errores se suman a «Tus errores más comunes».</p>
+    <p class="muted">Manos sueltas para memorizar la tabla, sin apostar. Los errores se suman a tu progreso.</p>
     <div id="drill-body" class="drill"></div>
   </dialog>
 
-  <!-- Jugadores -->
-  <dialog id="dlg-players" class="dlg">
+  <!-- Progreso -->
+  <dialog id="dlg-progress" class="dlg" aria-labelledby="t-progress">
     <div class="dlg-head">
-      <h2>Jugadores</h2>
-      <button class="x" data-action="close" aria-label="Cerrar">×</button>
+      <h2 id="t-progress">Progreso</h2>
+      <button class="x" data-action="close" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
     </div>
-    <p class="muted">Cada jugador tiene su propio saldo y puede ocupar varios puestos. Los bots juegan siempre con estrategia básica y se recargan solos si se quedan sin saldo.</p>
-    <p class="warn" id="players-busy" hidden>Hay una ronda en curso: el saldo y el tipo se pueden cambiar entre rondas.</p>
+    <div id="progress-body" class="progress"></div>
+  </dialog>
+
+  <!-- Jugadores -->
+  <dialog id="dlg-players" class="dlg" aria-labelledby="t-players">
+    <div class="dlg-head">
+      <h2 id="t-players">Jugadores</h2>
+      <button class="x" data-action="close" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+    </div>
+    <p class="muted">Cada jugador tiene su propio saldo y puede ocupar varios puestos. Los bots juegan con estrategia básica y se recargan solos si se quedan sin saldo.</p>
+    <p class="warn" id="players-busy" hidden>Hay una ronda en curso. El saldo y el tipo de jugador se cambian entre rondas.</p>
     <div id="players-list" class="players-list"></div>
     <div class="btn-row">
-      <button class="btn ghost" data-action="add-player">+ Jugador</button>
-      <button class="btn ghost" data-action="add-bot">+ Bot</button>
+      <button class="btn ghost" data-action="add-player">Añadir jugador</button>
+      <button class="btn ghost" data-action="add-bot">Añadir bot</button>
       <span class="spacer"></span>
       <button class="btn primary" data-action="save-players">Guardar</button>
     </div>
   </dialog>
 
   <!-- Reglas -->
-  <dialog id="dlg-rules" class="dlg">
+  <dialog id="dlg-rules" class="dlg" aria-labelledby="t-rules">
     <div class="dlg-head">
-      <h2>Reglas y práctica</h2>
-      <button class="x" data-action="close" aria-label="Cerrar">×</button>
+      <h2 id="t-rules">Reglas y práctica</h2>
+      <button class="x" data-action="close" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
     </div>
+    <p class="warn" id="rules-busy" hidden>Hay una ronda en curso. Las reglas de la mesa se cambian entre rondas.</p>
     <form id="rules-form" class="rules" onsubmit="return false">
       <fieldset>
         <legend>Mesa</legend>
@@ -124,8 +153,8 @@
         <label>Máximo de manos al dividir
           <select name="maxHands" data-round-lock><option>2</option><option>3</option><option>4</option><option>5</option></select>
         </label>
-        <label>Apuesta mínima <input type="number" name="minBet" min="1" step="1" data-round-lock></label>
-        <label>Apuesta máxima <input type="number" name="maxBet" min="1" step="1" data-round-lock></label>
+        <label>Apuesta mínima <input type="number" name="minBet" min="1" step="1" inputmode="numeric" data-round-lock></label>
+        <label>Apuesta máxima <input type="number" name="maxBet" min="1" step="1" inputmode="numeric" data-round-lock></label>
       </fieldset>
       <fieldset>
         <legend>Reglas</legend>
@@ -145,6 +174,18 @@
         </label>
       </fieldset>
     </form>
+    <details class="keys">
+      <summary>Atajos de teclado</summary>
+      <dl>
+        <dt><kbd>Espacio</kbd></dt><dd>Repartir</dd>
+        <dt><kbd>1</kbd>–<kbd>5</kbd></dt><dd>Fichas de 5, 25, 100, 500 y 1000</dd>
+        <dt><kbd>⌫</kbd></dt><dd>Quitar la apuesta</dd>
+        <dt><kbd>H</kbd> <kbd>S</kbd> <kbd>D</kbd> <kbd>P</kbd> <kbd>R</kbd></dt><dd>Pedir, plantarse, doblar, dividir, rendirse</dd>
+        <dt><kbd>I</kbd> <kbd>N</kbd></dt><dd>Tomar o rechazar el seguro</dd>
+        <dt><kbd>?</kbd></dt><dd>Pista</dd>
+        <dt><kbd>T</kbd></dt><dd>Tabla de estrategia</dd>
+      </dl>
+    </details>
     <div class="btn-row">
       <button class="btn ghost small danger" data-action="reset-all">Borrar todo</button>
       <button class="btn ghost small" data-action="reset-rules">Reglas por defecto</button>
