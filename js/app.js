@@ -10,6 +10,8 @@ const CHIPS = [5, 25, 100, 500, 1000];
 const COLORS = ['#e8b04b', '#5fb3e8', '#ef7a62', '#8fd17a', '#c48be8', '#ec8fc2', '#6fdccd', '#e6dc7a'];
 const STORE = 'bj-entrenador-v1';
 const LOG_MAX = 300;
+// Versión de los datos guardados; al subirla, load() migra lo que guardaron versiones anteriores.
+const DATA_VERSION = 2;
 // Cuánto sube cada puesto para seguir la curva de la mesa (el puesto 4 es el centro).
 const SEAT_LIFT = [0.58, 0.24, 0.07, 0, 0.07, 0.24, 0.58];
 
@@ -22,7 +24,7 @@ const DEFAULT_SETTINGS = {
   resplitAces: true,
   hitSplitAces: false,
   bjPays: 1.5,
-  minBet: 10,
+  minBet: 5,
   maxBet: 5000,
   penetration: 0, // 0 = corte aleatorio entre el 45% y el 55% del zapato
   showHint: false,
@@ -86,6 +88,7 @@ function save() {
         players: state.players,
         seats: state.seats.map((s) => ({ playerId: s.playerId, bet: s.bet })),
         log: state.log,
+        version: DATA_VERSION,
       }),
     );
   } catch {
@@ -102,6 +105,8 @@ function load() {
   }
   if (data && Array.isArray(data.players) && data.players.length) {
     state.settings = { ...DEFAULT_SETTINGS, ...data.settings };
+    // Hasta la versión 2 la apuesta mínima por defecto era 10; ahora es 5.
+    if ((data.version || 1) < 2 && state.settings.minBet === 10) state.settings.minBet = 5;
     state.players = data.players.map((p) => ({ rebuys: 0, ...p, stats: { decisions: 0, correct: 0, hands: 0, ...p.stats } }));
     if (Array.isArray(data.log)) state.log = data.log.slice(0, LOG_MAX);
     (data.seats || []).forEach((s, i) => {
