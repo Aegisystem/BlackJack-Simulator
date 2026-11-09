@@ -1,4 +1,5 @@
 import { ACTIONS, bestAction, cardValue, handValue, isBlackjack, isPair } from './strategy.js';
+import * as sfx from './sound.js';
 
 /* ───────────────────────── Configuración y estado ───────────────────────── */
 
@@ -28,6 +29,10 @@ const DEFAULT_SETTINGS = {
   feedback: true,
   showCount: false,
   speed: 1, // 0 rápido · 1 normal · 2 lento
+  sound: true,
+  volume: 0.7,
+  feedbackSound: true,
+  voice: false,
 };
 
 const state = {
@@ -123,6 +128,9 @@ const isHumanSeat = (seat) => {
   return !!p && !p.isBot;
 };
 const S = () => state.settings;
+// Posición estéreo de cada puesto: el puesto 1 queda a la derecha y el 7 a la izquierda.
+const panFor = (si) => ((3 - si) / 3) * 0.55;
+const applySound = () => sfx.configure({ enabled: S().sound, volume: S().volume, voice: S().voice });
 const delay = (base) => base * [0.35, 1, 1.8][S().speed ?? 1];
 const wait = (ms) => new Promise((r) => setTimeout(r, delay(ms)));
 
@@ -174,11 +182,12 @@ function countCard(c) {
   else if (v >= 10) state.runningCount--;
 }
 
-function draw(faceUp = true) {
+function draw(faceUp = true, pan = 0) {
   if (!state.shoe.length) buildShoe();
   const c = state.shoe.pop();
-  c.fresh = true;
+  c.at = performance.now();
   if (faceUp) countCard(c);
+  sfx.card(pan);
   return c;
 }
 
@@ -254,9 +263,12 @@ async function deal() {
 
   state.notice = '';
   state.summary = null;
-  if (state.needShuffle || !state.shoe.length) {
+  state.phase = 'dealing';
+  await sweepTable();
+  const shuffling = state.needShuffle || !state.shoe.length;
+  if (shuffling) {
     buildShoe();
-    tableEvent('Barajando un zapato nuevo');
+    tableEvent('Barajando un zapato nuevo', 4000);
   }
 
   state.phase = 'dealing';
@@ -273,12 +285,18 @@ async function deal() {
     }
   }
   render();
+  if (shuffling) {
+    // Se espera a que termine el sonido de la barajada antes de repartir.
+    const secs = sfx.shuffle();
+    await new Promise((r) => setTimeout(r, secs ? secs * 1000 : delay(700)));
+  }
 
   for (let round = 0; round < 2; round++) {
-    for (const seat of state.seats) {
+    for (let si = 0; si < SEATS; si++) {
+      const seat = state.seats[si];
       if (!seat.hands.length) continue;
       await wait(240);
-      seat.hands[0].cards.push(draw());
+      seat.hands[0].cards.push(draw(true, panFor(si)));
       render();
     }
     await wait(240);
@@ -286,14 +304,17 @@ async function deal() {
     render();
   }
 
-  for (const seat of state.seats) {
+  let naturals = 0;
+  state.seats.forEach((seat) => {
     for (const h of seat.hands) {
       if (isBlackjack(h.cards)) {
         h.natural = true;
         h.done = true;
+        naturals++;
       }
     }
-  }
+  });
+  if (naturals) sfx.say('Blackjack');
 
   const up = state.dealer.cards[0];
   let dealerBJ = false;
@@ -303,6 +324,7 @@ async function deal() {
     dealerBJ = isBlackjack(state.dealer.cards);
     if (dealerBJ) revealHole();
     else tableEvent('El crupier revisó: no tiene Blackjack');
+    if (dealerBJ) sfx.say('El crupier tiene Blackjack');
     render();
   }
 
@@ -313,8 +335,10 @@ async function deal() {
     await dealerPlay();
   }
   settle();
+  const soundEnd = settleSounds();
   if (state.shoe.length <= state.cutAt) state.needShuffle = true;
   state.summary = roundSummary(dealerBJ);
+  if (!dealerBJ) sfx.say(state.summary.title);
   state.phase = 'betting';
   state.turn = null;
   state.pending = null;
@@ -327,8 +351,35 @@ async function deal() {
     if (seat.bet < S().minBet) seat.bet = 0;
   }
   botBets(true);
+  // Los bots ponen sus fichas para la próxima mano cuando el crupier termina de pagar.
+  state.seats.forEach((seat, si) => {
+    const p = seat.playerId && getPlayer(seat.playerId);
+    if (p && p.isBot && seat.bet) sfx.chips(2, panFor(si), soundEnd + 0.3 + si * 0.08);
+  });
   save();
   render();
+}
+
+/** El crupier paga y recoge puesto por puesto. Devuelve cuándo termina, en segundos. */
+function settleSounds() {
+  let t = 0.2;
+  state.seats.forEach((seat, si) => {
+    const pan = panFor(si);
+    for (const h of seat.hands) {
+      const r = h.result;
+      if (!r) continue;
+      if (r.kind === 'win') sfx.payout(pan, t);
+      else if (r.kind === 'bj') sfx.payout(pan, t, true);
+      else if ((r.kind === 'lose' || r.kind === 'bust') && !h.collected) sfx.collect(pan, t);
+      else if (r.kind === 'push' && !r.ins) continue;
+      if (r.ins) {
+        if (r.insNet > 0) sfx.payout(pan, t + 0.15);
+        else sfx.collect(pan, t + 0.15);
+      }
+      t += 0.26;
+    }
+  });
+  return t;
 }
 
 async function playSeats() {
@@ -344,7 +395,7 @@ async function playSeats() {
       if (hand.cards.length === 1) {
         render();
         await wait(300);
-        hand.cards.push(draw());
+        hand.cards.push(draw(true, panFor(si)));
       }
       render();
       while (!hand.done) {
@@ -388,6 +439,7 @@ const INSURANCE_REASON =
   'El seguro es una apuesta aparte: paga 2 a 1 si el crupier tiene Blackjack, pero eso pasa menos de 1 de cada 3 veces. A la larga pierde dinero, así que la estrategia básica nunca lo toma, ni siquiera el "pago igual" con tu Blackjack.';
 
 async function offerInsurance() {
+  if (state.seats.some((s) => s.hands.length && isHumanSeat(s))) sfx.say('¿Seguro?');
   for (let si = 0; si < SEATS; si++) {
     const seat = state.seats[si];
     const hand = seat.hands[0];
@@ -404,9 +456,11 @@ async function offerInsurance() {
     if (take) {
       player.bankroll -= cost;
       hand.insurance = cost;
+      sfx.chips(1, panFor(si));
     }
     player.stats.decisions++;
     if (!take) player.stats.correct++;
+    feedbackSound(!take);
     logDecision({
       ok: !take,
       player: player.name,
@@ -457,10 +511,17 @@ function logDecision(entry) {
   state.log = state.log.slice(0, LOG_MAX);
 }
 
+function feedbackSound(ok) {
+  if (!S().feedback || !S().feedbackSound) return;
+  if (ok) sfx.good();
+  else sfx.bad();
+}
+
 function judge(player, si, hi, hand, act, rec) {
   const ok = act === rec.action;
   player.stats.decisions++;
   if (ok) player.stats.correct++;
+  feedbackSound(ok);
   logDecision({
     ok,
     player: player.name,
@@ -474,9 +535,11 @@ function judge(player, si, hi, hand, act, rec) {
 
 async function apply(seat, hi, act, player) {
   const hand = seat.hands[hi];
+  const pan = panFor(state.seats.indexOf(seat));
   switch (act) {
     case 'H':
-      hand.cards.push(draw());
+      await wait(160);
+      hand.cards.push(draw(true, pan));
       break;
     case 'S':
       hand.done = true;
@@ -485,30 +548,37 @@ async function apply(seat, hi, act, player) {
       player.bankroll -= hand.bet;
       hand.bet *= 2;
       hand.doubled = true;
-      await wait(200);
-      hand.cards.push(draw());
+      sfx.chips(2, pan);
+      await wait(260);
+      hand.cards.push(draw(true, pan));
       hand.done = true;
       break;
     case 'P': {
       player.bankroll -= hand.bet;
       const moved = hand.cards.pop();
+      moved.slidAt = performance.now();
       const aces = moved.rank === 'A';
       hand.fromSplit = true;
       hand.splitAces = aces;
       seat.hands.splice(hi + 1, 0, { cards: [moved], bet: hand.bet, fromSplit: true, splitAces: aces });
+      sfx.chips(2, pan);
       render();
       await wait(320);
-      hand.cards.push(draw());
+      hand.cards.push(draw(true, pan));
       break;
     }
     case 'R':
       hand.surrendered = true;
       hand.done = true;
+      hand.collected = true;
+      sfx.collect(pan, 0.1);
       break;
   }
   if (handValue(hand.cards).total > 21) {
     hand.bust = true;
     hand.done = true;
+    hand.collected = true;
+    sfx.collect(pan, 0.35);
   }
 }
 
@@ -518,7 +588,8 @@ function revealHole() {
   const hole = state.dealer.cards[1];
   if (hole) {
     countCard(hole);
-    hole.flip = true;
+    hole.flipAt = performance.now();
+    sfx.flip();
   }
 }
 
@@ -626,6 +697,7 @@ function addChip(v) {
   if (add <= 0) return notice(free <= 0 ? `${p.name} no tiene más saldo libre.` : `La apuesta máxima es ${fmt(S().maxBet)}.`);
   seat.bet += add;
   state.notice = '';
+  sfx.chips(add >= 100 ? 2 : 1, panFor(state.selectedSeat));
   render();
 }
 
@@ -671,12 +743,79 @@ function chipColor(amount) {
   return `var(--chip-${c})`;
 }
 
+/* Animaciones de cartas. Cada carta guarda cuándo se repartió, se volteó o se movió; si la
+   mesa se vuelve a dibujar a mitad de una animación, esta sigue desde donde iba (con un
+   retraso negativo) en vez de empezar otra vez o cortarse. */
+const DEAL_MS = 520;
+const FLIP_MS = 760;
+const SLIDE_MS = 320;
+const aim = new Map(); // id de carta -> distancia desde el zapato
+
 function cardHTML(c, opts = {}) {
-  const anim = c.flip ? ' flip' : c.fresh ? ' fresh' : '';
-  if (opts.back) return `<div class="card back${anim}" role="img" aria-label="Carta boca abajo"></div>`;
+  const now = performance.now();
+  const since = (t) => (t ? now - t : Infinity);
+  const cls = ['card'];
+  const style = [];
+  const dealt = since(c.at);
+  const flipped = since(c.flipAt);
+  const slid = since(c.slidAt);
+  if (dealt < DEAL_MS) {
+    cls.push('fresh');
+    style.push(`animation-delay:${-Math.round(dealt)}ms`);
+  } else if (slid < SLIDE_MS) {
+    cls.push('slid');
+    style.push(`animation-delay:${-Math.round(slid)}ms`);
+  }
+  const v = aim.get(c.id);
+  if (v) style.push(`--fx:${v.x}px;--fy:${v.y}px`);
+  const attrs = `data-cid="${c.id}"${style.length ? ` style="${style.join(';')}"` : ''}`;
+  if (opts.back) return `<div class="${cls.join(' ')} back" ${attrs} role="img" aria-label="Carta boca abajo"></div>`;
   const red = c.suit === '♥' || c.suit === '♦';
-  return `<div class="card${red ? ' red' : ''}${anim}${opts.side ? ' side' : ''}" role="img" aria-label="${c.rank}${c.suit}">
-    <span class="ci" aria-hidden="true">${c.rank}<i>${c.suit}</i></span><span class="cs" aria-hidden="true">${c.suit}</span></div>`;
+  const face = `<span class="ci" aria-hidden="true">${c.rank}<i>${c.suit}</i></span><span class="cs" aria-hidden="true">${c.suit}</span>`;
+  if (flipped < FLIP_MS) {
+    // Carta de dos caras: empieza mostrando el dorso y gira hasta quedar boca arriba.
+    return `<div class="card flipper${red ? ' red' : ''}" data-cid="${c.id}" style="animation-delay:${-Math.round(flipped)}ms" role="img" aria-label="${c.rank}${c.suit}">
+      <div class="face front">${face}</div><div class="face back"></div></div>`;
+  }
+  if (red) cls.push('red');
+  if (opts.side) cls.push('side');
+  return `<div class="${cls.join(' ')}" ${attrs} role="img" aria-label="${c.rank}${c.suit}">${face}</div>`;
+}
+
+/** Calcula, para cada carta recién repartida, de dónde viene: el zapato. */
+function aimNewCards(root = document) {
+  const shoe = $('#shoe .shoe-box');
+  if (!shoe) return;
+  const s = shoe.getBoundingClientRect();
+  const sx = s.left + s.width / 2;
+  const sy = s.top + s.height / 2;
+  root.querySelectorAll('.card.fresh[data-cid]').forEach((el) => {
+    if (aim.has(el.dataset.cid)) return;
+    const r = el.getBoundingClientRect();
+    const v = { x: Math.round(sx - (r.left + r.width / 2)), y: Math.round(sy - (r.top + r.height / 2)) };
+    aim.set(el.dataset.cid, v);
+    el.style.setProperty('--fx', `${v.x}px`);
+    el.style.setProperty('--fy', `${v.y}px`);
+  });
+}
+
+/** El crupier recoge las cartas de la ronda anterior hacia su izquierda antes de repartir. */
+async function sweepTable() {
+  const els = [...document.querySelectorAll('#seats .card, #dealer .card:not(.ghost)')];
+  aim.clear();
+  if (!els.length) return;
+  const felt = $('.felt').getBoundingClientRect();
+  const tx = felt.left + 48;
+  const ty = felt.top + 36;
+  els.forEach((el, i) => {
+    const r = el.getBoundingClientRect();
+    el.style.setProperty('--gx', `${Math.round(tx - (r.left + r.width / 2))}px`);
+    el.style.setProperty('--gy', `${Math.round(ty - (r.top + r.height / 2))}px`);
+    el.style.animationDelay = `${Math.min(i * 14, 220)}ms`;
+    el.classList.add('gone');
+  });
+  sfx.sweep();
+  await wait(520);
 }
 
 function handTotal(h) {
@@ -998,13 +1137,7 @@ function render() {
   renderCoach();
   if ($('#dlg-chart').open) renderChart();
   keepSeatInView();
-  // Las cartas nuevas solo se animan una vez.
-  const clear = (c) => {
-    c.fresh = false;
-    c.flip = false;
-  };
-  state.dealer.cards.forEach(clear);
-  state.seats.forEach((s) => s.hands.forEach((h) => h.cards.forEach(clear)));
+  aimNewCards();
 }
 
 // En pantallas angostas los puestos se desplazan: centra el puesto que juega o el elegido.
@@ -1112,10 +1245,14 @@ function drillNext() {
       break;
     }
   }
-  drill.cards = cards.map((c) => ({ ...c, id: uid('d'), fresh: true }));
-  drill.up = { ...randCard(), fresh: true };
+  const t = performance.now();
+  drill.cards = cards.map((c, i) => ({ ...c, id: uid('d'), at: t + 120 * (i + 1) }));
+  drill.up = { ...randCard(), at: t };
   drill.rec = bestAction(drill.cards, drill.up, drillOptions());
   drill.answer = null;
+  sfx.card(-0.3);
+  sfx.card(0.3, 0.12);
+  sfx.card(0.3, 0.24);
   renderDrill();
 }
 
@@ -1128,6 +1265,7 @@ function drillAnswer(act) {
   const ok = act === drill.rec.action;
   drill.answer = act;
   drill.n++;
+  feedbackSound(ok);
   if (ok) {
     drill.ok++;
     drill.streak++;
@@ -1166,10 +1304,6 @@ function renderDrill() {
     </div>
     <div class="row actions" role="group" aria-label="Jugadas">${keys.map(btn).join('')}</div>
     ${result}`;
-  drill.cards.forEach((c) => {
-    c.fresh = false;
-  });
-  drill.up.fresh = false;
 }
 
 /* ───────────────────────── Tabla de estrategia ───────────────────────── */
@@ -1300,7 +1434,7 @@ function readPlayersForm() {
   pickSelectedSeat();
 }
 
-const RULE_FIELDS = ['decks', 'h17', 'das', 'surrender', 'maxHands', 'resplitAces', 'hitSplitAces', 'bjPays', 'minBet', 'maxBet', 'penetration', 'showHint', 'feedback', 'showCount', 'speed'];
+const RULE_FIELDS = ['decks', 'h17', 'das', 'surrender', 'maxHands', 'resplitAces', 'hitSplitAces', 'bjPays', 'minBet', 'maxBet', 'penetration', 'showHint', 'feedback', 'showCount', 'speed', 'sound', 'volume', 'feedbackSound', 'voice'];
 
 function fillRules() {
   const f = $('#rules-form');
@@ -1315,6 +1449,7 @@ function fillRules() {
     el.disabled = busy;
   });
   $('#rules-busy').hidden = !busy;
+  f.elements.voice.disabled = !sfx.hasVoice();
 }
 
 function readRules() {
@@ -1344,6 +1479,7 @@ function readRules() {
 function clearBet() {
   const seat = state.seats[state.selectedSeat];
   if (state.phase === 'betting' && isHumanSeat(seat)) {
+    if (seat.bet) sfx.collect(panFor(state.selectedSeat));
     seat.bet = 0;
     state.notice = '';
     render();
@@ -1402,6 +1538,9 @@ document.addEventListener('click', (e) => {
     case 'hint':
       state.hintShown = true;
       render();
+      break;
+    case 'toggle-sound':
+      toggleSound();
       break;
     case 'coach-toggle':
       coachOpen = !coachOpen;
@@ -1494,6 +1633,8 @@ document.addEventListener('click', (e) => {
       break;
     case 'save-rules':
       readRules();
+      applySound();
+      renderSoundButton();
       renderPrint.key = '';
       save();
       $('#dlg-rules').close();
@@ -1547,6 +1688,10 @@ document.addEventListener('keydown', (e) => {
     }
     return;
   }
+  if (k === 'm' && !document.querySelector('dialog[open]')) {
+    toggleSound();
+    return;
+  }
   if (k === 't') {
     const d = $('#dlg-chart');
     if (d.open) d.close();
@@ -1578,7 +1723,42 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+function toggleSound() {
+  state.settings.sound = !S().sound;
+  applySound();
+  renderSoundButton();
+  save();
+  if (S().sound) sfx.chips(2);
+}
+
+function renderSoundButton() {
+  const b = $('#sound-btn');
+  const on = S().sound;
+  b.setAttribute('aria-pressed', String(on));
+  b.title = on ? 'Silenciar (M)' : 'Activar el sonido (M)';
+  b.querySelector('.on').style.display = on ? '' : 'none';
+  b.querySelector('.off').style.display = on ? 'none' : '';
+}
+
+// El navegador solo permite audio después del primer toque o tecla.
+function unlockAudio() {
+  sfx.unlock();
+  removeEventListener('pointerdown', unlockAudio, true);
+  removeEventListener('keydown', unlockAudio, true);
+}
+addEventListener('pointerdown', unlockAudio, true);
+addEventListener('keydown', unlockAudio, true);
+
+// Al mover el volumen se escucha una ficha para comparar.
+$('#rules-form').elements.volume.addEventListener('input', (e) => {
+  sfx.configure({ enabled: true, volume: Number(e.target.value), voice: false });
+  sfx.chips(1);
+});
+$('#dlg-rules').addEventListener('close', applySound);
+
 load();
+applySound();
+renderSoundButton();
 buildShoe();
 render();
 let resizeTimer = 0;

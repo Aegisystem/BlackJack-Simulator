@@ -110,7 +110,7 @@ kbd {
   transform: rotate(-7deg);
   box-shadow: 0 6px 14px -4px #000d;
 }
-.brand h1 { margin: 0; font: 700 21px/1.05 var(--font-display); letter-spacing: .01em; }
+.brand h1 { margin: 0; font: 700 21px/1.05 var(--font-display); letter-spacing: .01em; white-space: nowrap; }
 .brand p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
 .top-actions { display: flex; gap: 2px; }
 .tb {
@@ -283,12 +283,54 @@ kbd {
 .card.ghost { background: transparent; box-shadow: inset 0 0 0 1.5px #ffffff2e; margin-right: 8px; }
 .card.side { transform: translateX(calc(var(--cw) * .22)) rotate(90deg); }
 .hand.doubled .cards { padding-right: calc(var(--cw) * .9); }
-.card.fresh { animation: deal .42s var(--ease-out) both; }
+/* Reparto: la carta sale del zapato (--fx/--fy los calcula app.js), gira en el aire y se asienta. */
+.card.fresh { animation: deal .52s var(--ease-out) both; }
 .card.side.fresh { animation-name: deal-side; }
-.card.flip { animation: flip .5s var(--ease-out) both; }
-@keyframes deal { from { transform: translate(34vw, -38vh) rotate(-24deg); } }
-@keyframes deal-side { from { transform: translate(34vw, -38vh) rotate(0deg); } }
-@keyframes flip { from { transform: rotateY(90deg); } }
+@keyframes deal {
+  0% { transform: translate(var(--fx, 0px), var(--fy, 0px)) rotate(-32deg) scale(.86); }
+  64% { transform: translate(0, -7px) rotate(3deg) scale(1.04); }
+  100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+}
+@keyframes deal-side {
+  0% { transform: translate(var(--fx, 0px), var(--fy, 0px)) rotate(0deg) scale(.86); }
+  100% { transform: translate(calc(var(--cw) * .22), 0) rotate(90deg) scale(1); }
+}
+
+/* Al dividir, la carta se desliza hacia la mano nueva. */
+.card.slid { animation: slid .32s var(--ease-out) both; }
+@keyframes slid { from { transform: translateX(-44px) rotate(-6deg); } }
+
+/* La carta oculta del crupier: la levanta, la gira en el aire y la deja boca arriba. */
+.card.flipper {
+  background: transparent;
+  box-shadow: none;
+  transform-style: preserve-3d;
+  animation: reveal .76s var(--ease-out) both;
+}
+.card.flipper .face {
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.card.flipper .front { background: var(--card); box-shadow: 0 1px 1px #0003, 0 5px 12px -4px #0008, inset 0 0 0 1px #0000001a; }
+.card.flipper .back {
+  transform: rotateY(180deg);
+  background: repeating-linear-gradient(45deg, #9b2a2a 0 4px, #7a1d1d 4px 8px);
+  box-shadow: 0 1px 1px #0003, 0 5px 12px -4px #0008, inset 0 0 0 3px var(--card), inset 0 0 0 4px #0002;
+}
+@keyframes reveal {
+  0% { transform: translateY(0) rotateY(180deg) scale(1); }
+  28% { transform: translateY(-6px) rotateY(180deg) scale(1.16); }
+  72% { transform: translateY(-6px) rotateY(0deg) scale(1.16); }
+  100% { transform: translateY(0) rotateY(0deg) scale(1); }
+}
+
+/* Fin de ronda: el crupier recoge las cartas hacia su izquierda. */
+.card.gone { animation: gone .42s cubic-bezier(.55, 0, .75, .2) both; }
+@keyframes gone {
+  to { transform: translate(var(--gx, 0px), var(--gy, 0px)) rotate(-18deg) scale(.55); opacity: 0; }
+}
 
 /* ───────────── Puestos ───────────── */
 /* Los puestos de las orillas suben por los lados; app.js calcula cuánto (fitSeats). */
@@ -682,6 +724,8 @@ table.chart { width: 100%; min-width: 480px; border-collapse: separate; border-s
 .pl-bot { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .pl-actions { grid-column: 2 / -1; display: flex; gap: 6px; justify-content: flex-end; }
 input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
+.rules input[type=range] { height: 28px; padding: 0; border: 0; background: none; accent-color: var(--gold); }
+.tb[aria-pressed="false"] { color: var(--muted); }
 
 .rules { display: grid; gap: 12px; margin: 12px 0 0; }
 .rules fieldset {
@@ -759,7 +803,7 @@ input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
 @media (max-width: 720px) {
   :root { --cw: 44px; }
   .dealer { --cw-base: 46px; }
-  .tb { width: 40px; padding: 0; justify-content: center; }
+  .tb { width: 36px; padding: 0; justify-content: center; }
   .tb span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .tb svg { width: 20px; height: 20px; }
   .brand p { display: none; }
@@ -802,7 +846,13 @@ input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
   .pl-actions { grid-column: 1 / -1; }
 }
 
+@media (max-width: 400px) {
+  .tb { width: 34px; }
+  .brand { gap: 10px; }
+  .top-actions { gap: 1px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .card.fresh, .card.flip, .dlg[open] { animation: none; }
+  .card.fresh, .card.slid, .card.flipper, .card.gone, .drill .card.fresh, .dlg[open] { animation: none; }
   .hand, .chip, .btn { transition: none; }
 }

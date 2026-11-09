@@ -43,6 +43,11 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h9M18 7.5h2M4 16.5h2M11 16.5h9"/><circle cx="15.5" cy="7.5" r="2.3"/><circle cx="8.5" cy="16.5" r="2.3"/></svg>
           <span>Reglas</span>
         </button>
+        <button class="tb" id="sound-btn" data-action="toggle-sound" aria-pressed="true" title="Silenciar (M)">
+          <svg class="on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9.2a3.8 3.8 0 0 1 0 5.6M18 6.8a7.3 7.3 0 0 1 0 10.4"/></svg>
+          <svg class="off" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+          <span>Sonido</span>
+        </button>
       </nav>
     </header>
 
@@ -173,6 +178,13 @@
           <select name="speed"><option value="0">Rápida</option><option value="1">Normal</option><option value="2">Lenta</option></select>
         </label>
       </fieldset>
+      <fieldset>
+        <legend>Sonido</legend>
+        <label class="chk"><input type="checkbox" name="sound"> Efectos de sonido</label>
+        <label>Volumen <input type="range" name="volume" min="0" max="1" step="0.05"></label>
+        <label class="chk"><input type="checkbox" name="feedbackSound"> Tono de acierto y error</label>
+        <label class="chk"><input type="checkbox" name="voice"> Voz del crupier (usa la voz del sistema)</label>
+      </fieldset>
     </form>
     <details class="keys">
       <summary>Atajos de teclado</summary>
@@ -184,6 +196,7 @@
         <dt><kbd>I</kbd> <kbd>N</kbd></dt><dd>Tomar o rechazar el seguro</dd>
         <dt><kbd>?</kbd></dt><dd>Pista</dd>
         <dt><kbd>T</kbd></dt><dd>Tabla de estrategia</dd>
+        <dt><kbd>M</kbd></dt><dd>Silenciar o activar el sonido</dd>
       </dl>
     </details>
     <div class="btn-row">

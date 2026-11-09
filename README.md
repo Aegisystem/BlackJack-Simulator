@@ -15,6 +15,8 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Progreso**: saldo, resultado y porcentaje de acierto de cada jugador, tus errores más comunes y las últimas decisiones. El historial se guarda en el navegador.
 - **Tabla de estrategia** (manos duras, suaves y parejas) que se ajusta a las reglas de la mesa y resalta la casilla de tu mano.
 - **Conteo Hi-Lo** opcional (cuenta corrida y cuenta real).
+- **Sonido real**: grabaciones de cartas y fichas para el reparto, la carta del crupier al voltearse, las apuestas, los pagos, la recogida de fichas y la barajada. Cada puesto suena desde su lado en estéreo. También hay un tono opcional de acierto o error y una voz del crupier opcional (usa la voz del sistema).
+- **Animación de cartas**: salen del zapato, el crupier levanta y voltea su carta oculta, y al empezar cada ronda recoge las cartas de la anterior.
 - **Corte aleatorio**: por defecto, en cada barajada la carta de corte cae en un punto al azar entre el 45% y el 55% del zapato, para que no sepas cuándo se va a barajar.
 - **Reglas configurables**: de 1 a 8 mazos, carta de corte (aleatoria o fija), S17 o H17, doblar después de dividir, rendición tardía, pago del blackjack (3 a 2 o 6 a 5) y apuestas mínima y máxima.
 - Los saldos, las estadísticas y las reglas se guardan en el navegador (`localStorage`).
@@ -34,6 +36,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 | `I` / `N` | Tomar seguro / Sin seguro |
 | `?` | Pista |
 | `T` | Abrir o cerrar la tabla de estrategia |
+| `M` | Silenciar o activar el sonido |
 
 ## Probar en tu computador
 
@@ -52,6 +55,10 @@ Luego abre <http://localhost:8000>.
 3. En **Source** elige **Deploy from a branch**, rama `main`, carpeta `/ (root)`.
 4. Espera un minuto. El sitio queda en `https://<usuario>.github.io/<repositorio>/`.
 
+## Créditos
+
+Los sonidos de cartas y fichas son del paquete [«Casino Audio»](https://kenney.nl/assets/casino-audio) de Kenney, con licencia CC0 (dominio público). Detalles en `sounds/CREDITOS.txt`.
+
 ## Estructura
 
 ```
@@ -59,6 +66,8 @@ index.html        Página y diálogos
 css/styles.css    Estilos de la mesa
 js/strategy.js    Estrategia básica (funciones puras)
 js/app.js         Juego, bots, interfaz y guardado
+js/sound.js       Sonidos y voz del crupier
+sounds/           Grabaciones de cartas y fichas (MP3)
 ```
 
 La estrategia de `js/strategy.js` está pensada para zapatos de 4 a 8 mazos. Con 1 o 2 mazos la estrategia exacta cambia un poco en algunas manos.

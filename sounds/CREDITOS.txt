@@ -1,0 +1,8 @@
+Sonidos de cartas y fichas
+
+Origen: «Casino Audio» (versión 1.1) de Kenney Vleugels — https://kenney.nl/assets/casino-audio
+Licencia: Creative Commons Zero (CC0) — https://creativecommons.org/publicdomain/zero/1.0/
+Se pueden usar en proyectos personales y comerciales; el crédito no es obligatorio.
+
+Cambios: se convirtieron de OGG a MP3 mono (96 kbps), se recortó el silencio inicial
+y se igualó el volumen máximo a -3 dB.
