@@ -16,6 +16,13 @@ function chipSet() {
   i = Math.min(i, LADDER.length - 5);
   return LADDER.slice(i, i + 5);
 }
+
+/** La ficha marcada; si ya no está entre las de la mesa, se marca la más baja. */
+function activeChip() {
+  const set = chipSet();
+  if (!set.includes(state.chip)) state.chip = set[0];
+  return state.chip;
+}
 const COLORS = ['#e8b04b', '#5fb3e8', '#ef7a62', '#8fd17a', '#c48be8', '#ec8fc2', '#6fdccd', '#e6dc7a'];
 const STORE = 'bj-entrenador-v1';
 const LOG_MAX = 300;
@@ -66,6 +73,7 @@ const state = {
   notice: '', // error de apuesta, se muestra en la barra inferior
   event: null, // aviso breve sobre la mesa { text, until }
   summary: null, // resultado de la última ronda
+  chip: null, // ficha marcada: tocar un círculo propio pone una de este valor
 };
 
 let uidN = 0;
@@ -432,7 +440,7 @@ async function playSeats() {
           act = rec.action;
         } else {
           act = await askHuman(o, rec);
-          judge(player, si, hi, hand, act, rec);
+          judge(player, si, hi, hand, act, rec, o);
         }
         await apply(seat, hi, act, player);
         render();
@@ -532,7 +540,7 @@ function feedbackSound(ok) {
   else sfx.bad();
 }
 
-function judge(player, si, hi, hand, act, rec) {
+function judge(player, si, hi, hand, act, rec, o) {
   const ok = act === rec.action;
   player.stats.decisions++;
   if (ok) player.stats.correct++;
@@ -545,6 +553,10 @@ function judge(player, si, hi, hand, act, rec) {
     chosen: act,
     rec: rec.action,
     reason: rec.reason,
+    // La situación exacta, para poder repetirla en el repaso de errores.
+    cards: hand.cards.map((c) => c.rank),
+    up: state.dealer.cards[0].rank,
+    opts: { canDouble: o.canDouble, canSplit: o.canSplit, canSurrender: o.canSurrender },
   });
 }
 
@@ -943,7 +955,7 @@ function bannerContent() {
     const anyHuman = state.seats.some((s) => isHumanSeat(s));
     return {
       title: 'Hagan sus apuestas',
-      sub: anyHuman ? 'Elige tus fichas y pulsa Repartir' : 'Siéntate en un puesto libre para jugar',
+      sub: anyHuman ? 'Marca una ficha y toca tu círculo para apostar' : 'Siéntate en un puesto libre para jugar',
       note: state.needShuffle ? 'Se baraja antes de la próxima mano' : '',
     };
   }
@@ -1091,7 +1103,8 @@ function renderDockInfo() {
         <div class="info-line bet-line">
           <label class="bet-field"><span>Apuesta</span><input data-bet-input type="number" inputmode="numeric" min="0" step="${S().minBet}" value="${seat.bet}" aria-label="Monto de la apuesta del puesto ${state.selectedSeat + 1}"></label>
           <span>libre <b class="num">${fmt(free)}</b></span>
-        </div>${note}`;
+        </div>
+        ${note || `<p class="info-hint">Toca tu círculo para poner fichas de <b>${fmt(activeChip())}</b></p>`}`;
     } else {
       el.innerHTML = `<div class="info-line">Toca el círculo de un puesto tuyo para apostar, o siéntate en un puesto libre.</div>${note}`;
     }
@@ -1123,9 +1136,10 @@ function renderControls() {
     const seat = state.seats[state.selectedSeat];
     const mine = isHumanSeat(seat);
     el.innerHTML = `<div class="row bet-row">
-      <div class="chips" role="group" aria-label="Fichas">${chipSet().map(
-        (v, i) => `<button class="chip${v === 1 ? ' light' : ''}" style="--c:var(--chip-${v})" data-action="chip" data-v="${v}" title="Ficha de ${fmt(v)} (tecla ${i + 1})" aria-label="Agregar ficha de ${fmt(v)}">${shortMoney(v)}</button>`,
-      ).join('')}</div>
+      <div class="chips" role="group" aria-label="Ficha para apostar">${chipSet().map((v, i) => {
+        const on = v === activeChip();
+        return `<button class="chip${v === 1 ? ' light' : ''}${on ? ' on' : ''}" style="--c:var(--chip-${v})" data-action="pick-chip" data-v="${v}" aria-pressed="${on}" title="Ficha de ${fmt(v)} (tecla ${i + 1})" aria-label="Marcar la ficha de ${fmt(v)}">${shortMoney(v)}</button>`;
+      }).join('')}</div>
       <div class="row">
         <button class="btn ghost" data-action="clear-bet" ${mine && seat.bet ? '' : 'disabled'}>Quitar</button>
         <button class="btn ghost" data-action="double-bet" ${mine && seat.bet ? '' : 'disabled'} aria-label="Duplicar la apuesta">×2</button>
@@ -1192,9 +1206,9 @@ function renderCoach() {
     );
   }
   const focus = (cur && cur.player) || (state.feedback && humans.find((h) => h.name === state.feedback.player)) || humans[0];
-  const foot = focus
-    ? `<div class="coach-foot"><span>${esc(focus.name)}: ${accuracyText(focus)}</span><button class="link" data-action="open-progress">Ver progreso</button></div>`
-    : '';
+  const pending = pendingReview().length;
+  const links = `${pending ? `<button class="link" data-action="open-review">Repasar errores (${pending})</button>` : ''}<button class="link" data-action="open-progress">Ver progreso</button>`;
+  const foot = focus ? `<div class="coach-foot"><span>${esc(focus.name)}: ${accuracyText(focus)}</span><span class="links">${links}</span></div>` : '';
   el.classList.toggle('open', coachOpen);
   el.innerHTML = html + foot;
 }
@@ -1239,18 +1253,86 @@ function netOf(p) {
   return p.bankroll + onTable - p.startBankroll - (p.rebuys || 0) * (p.startBankroll || 1000);
 }
 
-/** Situaciones en las que más se equivocan los jugadores humanos. */
-function commonMistakes() {
+/* ───────────────────────── Repaso de errores ───────────────────────── */
+
+const MASTER = 3; // aciertos seguidos para dar una situación por dominada
+
+const flagsOf = (o) => `${o.canDouble ? 'D' : ''}${o.canSplit ? 'P' : ''}${o.canSurrender ? 'R' : ''}`;
+const tenRank = () => ['10', 'J', 'Q', 'K'][rnd(4)];
+
+/** Dos cartas distintas, sin As, que suman `t`. */
+function hardCards(t) {
+  const options = [];
+  for (let a = 2; a <= 10; a++) {
+    const b = t - a;
+    if (b > a && b <= 10) options.push([a, b]);
+  }
+  if (!options.length) return t === 20 ? [tenRank(), tenRank()] : null;
+  const [a, b] = options[rnd(options.length)];
+  const r = (v) => (v === 10 ? tenRank() : String(v));
+  return [r(a), r(b)];
+}
+
+/**
+ * Cartas, carta del crupier y jugadas permitidas de una decisión del historial. Las
+ * decisiones guardadas antes de esta función no tenían las cartas: se reconstruyen.
+ */
+function situationOf(l) {
+  if (l.key === 'Seguro') return null;
+  if (l.cards && l.up && l.opts) return { cards: l.cards, up: l.up, opts: l.opts };
+  const m = /^(?:Pareja (A|\d+)-(?:A|\d+)|(\d+) (suave|duro)) vs (As|\d+)$/.exec(l.desc || '');
+  if (!m) return null;
+  const up = m[4] === 'As' ? 'A' : m[4] === '10' ? tenRank() : m[4];
+  let cards;
+  if (m[1]) {
+    const r = m[1] === 'A' ? 'A' : m[1] === '10' ? tenRank() : m[1];
+    cards = [r, r];
+  } else if (m[3] === 'suave') {
+    const k = Number(m[2]) - 11;
+    if (k < 2 || k > 9) return null;
+    cards = ['A', String(k)];
+  } else cards = hardCards(Number(m[2]));
+  if (!cards) return null;
+  const pair = cardValue({ rank: cards[0] }) === cardValue({ rank: cards[1] });
+  return { cards, up, opts: { canDouble: true, canSplit: pair, canSurrender: S().surrender } };
+}
+
+/**
+ * Agrupa el historial por situación (mano, carta del crupier y jugadas permitidas): cuántas
+ * veces se falló y cuántos aciertos seguidos lleva desde el último fallo.
+ */
+function reviewStats() {
   const map = new Map();
   for (const l of state.log) {
-    if (l.ok) continue;
-    const desc = l.key || l.desc;
-    const k = `${desc}|${l.rec}`;
-    const m = map.get(k) || { desc, rec: l.rec, n: 0 };
-    m.n++;
-    map.set(k, m);
+    // El historial va del más reciente al más antiguo.
+    const sit = situationOf(l);
+    if (!sit) continue;
+    const key = `${l.desc}|${flagsOf(sit.opts)}`;
+    let e = map.get(key);
+    if (!e) {
+      e = { key, desc: l.desc, many: sit.cards.length > 2, rec: l.rec, misses: 0, streak: 0, counting: true, sample: null };
+      map.set(key, e);
+    }
+    if (l.ok) {
+      if (e.counting) e.streak++;
+    } else {
+      if (!e.misses) e.rec = l.rec;
+      e.misses++;
+      e.counting = false;
+    }
+    if (!e.sample && l.cards) e.sample = l;
   }
-  return [...map.values()].sort((a, b) => b.n - a.n).slice(0, 6);
+  return [...map.values()].filter((e) => e.misses > 0).map((e) => ({ ...e, mastered: e.streak >= MASTER }));
+}
+
+const pendingReview = () => reviewStats().filter((e) => !e.mastered);
+
+function openReview() {
+  if ($('#dlg-progress').open) $('#dlg-progress').close();
+  drill.mode = 'review';
+  drill.key = null;
+  drillNext();
+  openDialog('#dlg-drill');
 }
 
 function renderProgress() {
@@ -1269,7 +1351,9 @@ function renderProgress() {
       </tr>`;
     })
     .join('');
-  const top = commonMistakes();
+  const all = reviewStats().sort((a, b) => b.misses - a.misses || a.streak - b.streak);
+  const top = all.slice(0, 8);
+  const pending = all.filter((e) => !e.mastered).length;
   const recent = state.log.slice(0, 40);
   $('#progress-body').innerHTML = `
     <div class="table-scroll"><table>
@@ -1278,7 +1362,18 @@ function renderProgress() {
     </table></div>
     <h3>Errores más comunes</h3>
     ${top.length
-      ? `<ul class="list">${top.map((m) => `<li><span class="n">${m.n}×</span><span class="grow">${esc(m.desc)}</span><span>lo correcto: <b>${LABELS[m.rec]}</b></span></li>`).join('')}</ul>`
+      ? `<ul class="list">${top
+          .map(
+            (m) => `<li><span class="n">${m.misses}×</span><span class="grow">${esc(m.desc)}${m.many ? ' <span class="muted">· más de 2 cartas</span>' : ''}</span><span>lo correcto: <b>${LABELS[m.rec]}</b></span>${
+              m.mastered ? '<span class="pill ok">Dominada</span>' : `<span class="pill" title="Aciertos seguidos desde el último fallo">${m.streak}/${MASTER}</span>`
+            }</li>`,
+          )
+          .join('')}</ul>
+         <div class="btn-row">${
+           pending
+             ? `<button class="btn primary small" data-action="open-review">Repasar mis errores (${pending})</button><span class="muted small">Cada mano sale hasta que la aciertes ${MASTER} veces seguidas.</span>`
+             : '<span class="muted small">Dominaste todos tus errores. Los nuevos fallos aparecerán aquí.</span>'
+         }</div>`
       : '<p class="empty-note">Todavía no hay errores registrados.</p>'}
     <h3>Últimas decisiones</h3>
     ${recent.length
@@ -1291,13 +1386,17 @@ function renderProgress() {
 
 /* ───────────────────────── Práctica rápida ───────────────────────── */
 
-const drill = { cards: [], up: null, rec: null, answer: null, n: 0, ok: 0, streak: 0, best: 0, timer: 0 };
+const drill = { mode: 'random', key: null, opts: null, cards: [], up: null, rec: null, answer: null, mastered: false, n: 0, ok: 0, streak: 0, best: 0, timer: 0 };
 
 const rnd = (n) => Math.floor(randomUnit() * n);
 const randCard = (ranks = RANKS) => ({ rank: ranks[rnd(ranks.length)], suit: SUITS[rnd(4)], id: uid('d') });
 
 function drillNext() {
   clearTimeout(drill.timer);
+  drill.answer = null;
+  drill.mastered = false;
+  if (drill.mode === 'review') return drillReview();
+  drill.key = null;
   const roll = randomUnit();
   const noAce = RANKS.filter((r) => r !== 'A');
   let cards;
@@ -1305,7 +1404,7 @@ function drillNext() {
     // Cada pareja (2-2 … 10-10, A-A) sale con la misma frecuencia.
     const kinds = ['A', '2', '3', '4', '5', '6', '7', '8', '9', 'T'];
     const k = kinds[rnd(kinds.length)];
-    const r = k === 'T' ? ['10', 'J', 'Q', 'K'][rnd(4)] : k;
+    const r = k === 'T' ? tenRank() : k;
     cards = [{ rank: r, suit: SUITS[rnd(4)] }, { rank: r, suit: SUITS[rnd(4)] }];
   } else if (roll < 0.55) {
     cards = [{ rank: 'A', suit: SUITS[rnd(4)] }, randCard(['2', '3', '4', '5', '6', '7', '8', '9'])];
@@ -1318,23 +1417,51 @@ function drillNext() {
       break;
     }
   }
+  dealDrill(cards, randCard(), { canDouble: true, canSplit: isPair(cards), canSurrender: S().surrender });
+}
+
+/** Elige una situación fallada: las más falladas y menos dominadas salen más seguido. */
+function drillReview() {
+  const deck = pendingReview();
+  if (!deck.length) {
+    drill.key = null;
+    drill.cards = [];
+    renderDrill();
+    return;
+  }
+  const pool = deck.length > 1 ? deck.filter((e) => e.key !== drill.key) : deck;
+  const weights = pool.map((e) => e.misses * (MASTER - e.streak));
+  let r = randomUnit() * weights.reduce((a, b) => a + b, 0);
+  let pick = pool[pool.length - 1];
+  for (let i = 0; i < pool.length; i++) {
+    r -= weights[i];
+    if (r <= 0) {
+      pick = pool[i];
+      break;
+    }
+  }
+  const sit = situationOf(pick.sample || { desc: pick.desc });
+  drill.key = pick.key;
+  dealDrill(
+    sit.cards.map((rank) => ({ rank, suit: SUITS[rnd(4)] })),
+    { rank: sit.up, suit: SUITS[rnd(4)] },
+    sit.opts,
+  );
+}
+
+function dealDrill(cards, up, opts) {
   const t = performance.now();
   drill.cards = cards.map((c, i) => ({ ...c, id: uid('d'), at: t + 120 * (i + 1) }));
-  drill.up = { ...randCard(), at: t };
-  drill.rec = bestAction(drill.cards, drill.up, drillOptions());
-  drill.answer = null;
+  drill.up = { ...up, id: uid('d'), at: t };
+  drill.opts = { canDouble: !!opts.canDouble, canSplit: !!opts.canSplit, canSurrender: !!opts.canSurrender && S().surrender };
+  drill.rec = bestAction(drill.cards, drill.up, { ...drill.opts, h17: S().h17, das: S().das });
   sfx.card(-0.3);
-  sfx.card(0.3, 0.12);
-  sfx.card(0.3, 0.24);
+  drill.cards.forEach((_, i) => sfx.card(0.3, 0.12 * (i + 1)));
   renderDrill();
 }
 
-function drillOptions() {
-  return { canDouble: true, canSplit: isPair(drill.cards), canSurrender: S().surrender, h17: S().h17, das: S().das };
-}
-
 function drillAnswer(act) {
-  if (drill.answer || !isLegal(act, { ...drillOptions(), canHit: true })) return;
+  if (!drill.cards.length || drill.answer || !isLegal(act, { ...drill.opts, canHit: true })) return;
   const ok = act === drill.rec.action;
   drill.answer = act;
   drill.n++;
@@ -1345,16 +1472,46 @@ function drillAnswer(act) {
     drill.best = Math.max(drill.best, drill.streak);
   } else drill.streak = 0;
   const up = drill.up.rank === 'A' ? 'As' : String(cardValue(drill.up));
-  const desc = `${describeHand(drill.cards)} vs ${up}`;
-  state.log.unshift({ ok, player: 'Práctica', color: '#e6b65c', desc, key: desc, chosen: act, rec: drill.rec.action, reason: drill.rec.reason });
+  state.log.unshift({
+    ok,
+    player: 'Práctica',
+    color: '#e6b65c',
+    desc: `${describeHand(drill.cards)} vs ${up}`,
+    chosen: act,
+    rec: drill.rec.action,
+    reason: drill.rec.reason,
+    cards: drill.cards.map((c) => c.rank),
+    up: drill.up.rank,
+    opts: drill.opts,
+  });
   state.log = state.log.slice(0, LOG_MAX);
+  if (drill.mode === 'review' && ok) {
+    const e = reviewStats().find((x) => x.key === drill.key);
+    drill.mastered = !!e && e.mastered;
+  }
   save();
   renderDrill();
-  if (ok) drill.timer = setTimeout(() => $('#dlg-drill').open && drillNext(), delay(900));
+  renderCoach();
+  if (ok) drill.timer = setTimeout(() => $('#dlg-drill').open && drillNext(), delay(drill.mastered ? 1600 : 900));
 }
 
 function renderDrill() {
-  const o = { ...drillOptions(), canHit: true };
+  const pending = pendingReview();
+  const review = drill.mode === 'review';
+  const tabs = `<div class="tabs drill-tabs" role="tablist">
+    <button role="tab" data-action="drill-mode" data-mode="random" class="${review ? '' : 'on'}" aria-selected="${!review}">Al azar</button>
+    <button role="tab" data-action="drill-mode" data-mode="review" class="${review ? 'on' : ''}" aria-selected="${review}">Mis errores <span class="count">${pending.length}</span></button>
+  </div>`;
+  if (review && !drill.cards.length) {
+    $('#drill-body').innerHTML = `${tabs}
+      <div class="drill-empty">
+        <p><b>No tienes errores pendientes.</b></p>
+        <p class="muted">Cada mano que falles en la mesa o aquí aparece en este repaso hasta que la aciertes ${MASTER} veces seguidas.</p>
+        <button class="btn primary" data-action="drill-mode" data-mode="random">Practicar al azar</button>
+      </div>`;
+    return;
+  }
+  const o = { ...drill.opts, canHit: true };
   const a = drill.answer;
   const ok = a && a === drill.rec.action;
   const keys = S().surrender ? ['H', 'S', 'D', 'P', 'R'] : ['H', 'S', 'D', 'P'];
@@ -1364,13 +1521,32 @@ function renderDrill() {
     else if (a && k === a) cls = ' wrong';
     return `<button class="btn act${cls}" data-action="drill-act" data-act="${k}" ${isLegal(k, o) && !a ? '' : 'disabled'}>${ACTIONS[k]} <kbd>${k}</kbd></button>`;
   };
-  const pct = drill.n ? Math.round((drill.ok / drill.n) * 100) : 0;
-  const result = a
-    ? `${ok ? coachCard('ok', ICON.check, `Correcto, ${ACTIONS[a].toLowerCase()}`, drill.rec.reason, false) : coachCard('bad', ICON.cross, `Era ${ACTIONS[drill.rec.action].toLowerCase()}, no ${ACTIONS[a].toLowerCase()}`, drill.rec.reason, false)}
-       <div class="row" style="justify-content:flex-end"><button class="btn primary" data-action="drill-next">Siguiente <kbd>Espacio</kbd></button></div>`
-    : `<p class="muted small">Es la primera decisión de la mano, así que puedes doblar${S().surrender ? ' o rendirte' : ''}.</p>`;
-  $('#drill-body').innerHTML = `
-    <div class="drill-stats"><span>Aciertos <b>${drill.ok} de ${drill.n}</b> (${pct}%)</span><span>Racha <b>${drill.streak}</b></span><span>Mejor racha <b>${drill.best}</b></span></div>
+  let stats;
+  if (review) {
+    const e = reviewStats().find((x) => x.key === drill.key);
+    const streak = e ? e.streak : 0;
+    const dots = Array.from({ length: MASTER }, (_, i) => `<i class="${i < streak ? 'on' : ''}"></i>`).join('');
+    stats = `<div class="drill-stats"><span>Pendientes <b>${pending.length}</b></span>${
+      e ? `<span>Fallada <b>${e.misses}</b> ${e.misses === 1 ? 'vez' : 'veces'}</span><span class="dots" title="${streak} de ${MASTER} aciertos seguidos">${dots}</span>` : ''
+    }</div>`;
+  } else {
+    const pct = drill.n ? Math.round((drill.ok / drill.n) * 100) : 0;
+    stats = `<div class="drill-stats"><span>Aciertos <b>${drill.ok} de ${drill.n}</b> (${pct}%)</span><span>Racha <b>${drill.streak}</b></span><span>Mejor racha <b>${drill.best}</b></span></div>`;
+  }
+  let note;
+  if (drill.cards.length > 2) note = 'Ya tienes más de dos cartas: no puedes doblar ni rendirte.';
+  else if (!drill.opts.canDouble) note = 'En esta mano no se podía doblar.';
+  else note = `Es la primera decisión de la mano, así que puedes doblar${drill.opts.canSurrender ? ' o rendirte' : ''}.`;
+  let result = `<p class="muted small">${note}</p>`;
+  if (a) {
+    const card = ok
+      ? drill.mastered
+        ? coachCard('ok', ICON.check, `¡Dominada! ${MASTER} aciertos seguidos`, drill.rec.reason, false)
+        : coachCard('ok', ICON.check, `Correcto, ${ACTIONS[a].toLowerCase()}`, drill.rec.reason, false)
+      : coachCard('bad', ICON.cross, `Era ${ACTIONS[drill.rec.action].toLowerCase()}, no ${ACTIONS[a].toLowerCase()}`, drill.rec.reason, false);
+    result = `${card}<div class="row" style="justify-content:flex-end"><button class="btn primary" data-action="drill-next">Siguiente <kbd>Espacio</kbd></button></div>`;
+  }
+  $('#drill-body').innerHTML = `${tabs}${stats}
     <div class="drill-felt">
       <div class="drill-side"><span>Crupier</span><div class="cards">${cardHTML(drill.up)}</div></div>
       <div class="drill-side"><span>Tú · ${describeHand(drill.cards)}</span><div class="cards">${drill.cards.map((c) => cardHTML(c)).join('')}</div></div>
@@ -1573,8 +1749,11 @@ document.addEventListener('click', (e) => {
   if (!el || el.disabled) return;
   const a = el.dataset.action;
   switch (a) {
-    case 'chip':
-      addChip(Number(el.dataset.v));
+    case 'pick-chip':
+      state.chip = Number(el.dataset.v);
+      sfx.pick();
+      renderControls();
+      renderDockInfo();
       break;
     case 'deal':
       deal();
@@ -1593,13 +1772,12 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'select-seat': {
+      // Tocar un círculo propio pone ahí la ficha marcada, como en las mesas en vivo.
       const si = Number(el.dataset.seat);
       if (state.phase !== 'betting' || !isHumanSeat(state.seats[si])) break;
-      const again = state.selectedSeat === si;
       state.selectedSeat = si;
       state.notice = '';
-      if (again && state.seats[si].bet === 0) addChip(S().minBet);
-      else render();
+      addChip(activeChip());
       break;
     }
     case 'sit-open': {
@@ -1639,6 +1817,14 @@ document.addEventListener('click', (e) => {
       break;
     case 'drill-next':
       drillNext();
+      break;
+    case 'drill-mode':
+      drill.mode = el.dataset.mode;
+      drill.key = null;
+      drillNext();
+      break;
+    case 'open-review':
+      openReview();
       break;
     case 'open-progress':
       renderProgress();
@@ -1811,7 +1997,8 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     deal();
   } else if (/^[1-5]$/.test(k)) {
-    addChip(chipSet()[Number(k) - 1]);
+    state.chip = chipSet()[Number(k) - 1];
+    addChip(state.chip);
   } else if (k === 'backspace' || k === 'delete') {
     e.preventDefault();
     clearBet();
@@ -1867,4 +2054,4 @@ addEventListener('resize', () => {
 });
 
 // Solo para pruebas: ?debug expone el estado en la consola.
-if (new URLSearchParams(location.search).has('debug')) window.mesa21 = { state, render, buildShoe };
+if (new URLSearchParams(location.search).has('debug')) window.mesa21 = { state, render, buildShoe, drill };

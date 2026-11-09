@@ -215,6 +215,11 @@ export function bet(value = 5, pan = 0, first = false) {
   playName(lastClack, { pan, gain: 1, rate });
 }
 
+/** Marcar una ficha en la bandeja: un toque corto y suave. */
+export function pick() {
+  if (!playName('chip-lay-1', { gain: 0.45, rate: [1.18, 1.22] }) && ctx) synthChip(0, 0);
+}
+
 /** Duplicar la apuesta: una cascada corta de fichas. */
 export function betDouble(pan = 0) {
   if (!ensure()) return;

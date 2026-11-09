@@ -12,12 +12,14 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Pistas** opcionales que muestran la jugada correcta antes de decidir.
 - **Seguro**: cuando el crupier muestra un As te ofrece seguro (paga 2 a 1), y te corrige si lo tomas.
 - **Práctica rápida**: manos sueltas para memorizar la tabla sin apostar, con aciertos y racha.
+- **Repaso de errores**: en la práctica rápida, «Mis errores» repite las manos exactas que fallaste (en la mesa o en la práctica) hasta que aciertes cada una 3 veces seguidas. Las más falladas salen más seguido. También se abre desde Progreso y desde el entrenador.
 - **Progreso**: saldo, resultado y porcentaje de acierto de cada jugador, tus errores más comunes y las últimas decisiones. El historial se guarda en el navegador.
 - **Tabla de estrategia** (manos duras, suaves y parejas) que se ajusta a las reglas de la mesa y resalta la casilla de tu mano.
 - **Conteo Hi-Lo** opcional (cuenta corrida y cuenta real).
 - **Sonido real**: grabaciones de cartas y fichas para el reparto, la carta del crupier al voltearse, las apuestas, los pagos, la recogida de fichas y la barajada. Cada puesto suena desde su lado en estéreo. También hay un tono opcional de acierto o error y una voz del crupier opcional (usa la voz del sistema).
 - **Animación de cartas**: salen del zapato, el crupier levanta y voltea su carta oculta, y al empezar cada ronda recoge las cartas de la anterior.
 - **Corte aleatorio**: por defecto, en cada barajada la carta de corte cae en un punto al azar entre el 45% y el 55% del zapato, para que no sepas cuándo se va a barajar.
+- **Ficha marcada**: tocas una ficha para marcarla y cada toque en tu círculo pone una de ese valor, como en las mesas en vivo. Las teclas `1` a `5` marcan la ficha y la apuestan.
 - **Apuestas rápidas**: las fichas se adaptan a la apuesta mínima de la mesa (con mínimo de 5.000 son 5k, 25k, 100k, 500k y 1M). También puedes escribir el monto exacto o usar «Máx» para apostar lo más posible.
 - **Reglas configurables**: de 1 a 8 mazos, carta de corte (aleatoria o fija), S17 o H17, doblar después de dividir, rendición tardía, pago del blackjack (3 a 2 o 6 a 5) y apuestas mínima y máxima.
 - Los saldos, las estadísticas y las reglas se guardan en el navegador (`localStorage`).
@@ -27,7 +29,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 | Tecla | Acción |
 |---|---|
 | `Espacio` / `Enter` | Repartir |
-| `1` a `5` | Fichas de 5, 25, 100, 500 y 1000 |
+| `1` a `5` | Marcar una ficha y apostarla |
 | `⌫` | Quitar la apuesta |
 | `H` | Pedir |
 | `S` | Plantarse |
