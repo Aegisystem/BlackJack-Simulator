@@ -789,9 +789,44 @@ table.chart { width: 100%; min-width: 480px; border-collapse: separate; border-s
 .pill.ok { background: #74d59626; color: var(--ok); }
 .empty-note { color: var(--muted); font-size: 13px; }
 
+/* Gráfica de resultado por ronda */
+.bank-chart { position: relative; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 6px; font-size: 13px; color: var(--text-2); }
+.chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart-legend i, .tip-row i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
+.chart-wrap-svg { position: relative; }
+.bank-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.bank-chart .grid { stroke: #ffffff14; stroke-width: 1; }
+.bank-chart .zero { stroke: #ffffff47; stroke-width: 1; }
+.bank-chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.bank-chart .series { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.bank-chart .end { stroke: var(--panel); stroke-width: 2; }
+.bank-chart .endlabel { fill: var(--text); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.bank-chart .cross { stroke: #ffffff5c; stroke-width: 1; }
+.bank-chart rect:focus { outline: none; }
+.bank-chart rect:focus-visible { stroke: var(--gold); stroke-width: 2; }
+.chart-tip {
+  position: absolute; top: 6px;
+  min-width: 130px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #0b1310f2;
+  border: 1px solid var(--line-2);
+  box-shadow: 0 10px 24px -10px #000;
+  font-size: 12px;
+  pointer-events: none;
+}
+.tip-head { margin-bottom: 4px; color: var(--muted); }
+.tip-row { display: flex; align-items: center; gap: 8px; line-height: 1.6; }
+.tip-row b { color: var(--text); font-variant-numeric: tabular-nums; }
+.tip-row span { color: var(--text-2); }
+.chart-table { margin-top: 6px; }
+.chart-table summary { cursor: pointer; font-size: 13px; color: var(--text-2); }
+.chart-table table { margin: 8px 0; font-size: 13px; }
+
 /* Examen */
 .exam-score { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 0 6px; text-align: center; }
-.exam-score strong { font: 700 52px/1 var(--font-display); color: var(--gold-2); font-variant-numeric: tabular-nums; }
+.exam-score strong { font: 700 52px/1 var(--font-ui); letter-spacing: -.02em; color: var(--text); }
 .exam-score span { font-size: 18px; font-weight: 700; }
 .exam-score em { font-style: normal; font-size: 13px; color: var(--muted); }
 .list .up { color: var(--ok); }

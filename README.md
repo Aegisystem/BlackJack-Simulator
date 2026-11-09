@@ -14,7 +14,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Práctica rápida**: manos sueltas para memorizar la tabla sin apostar, con aciertos y racha.
 - **Repaso de errores**: en la práctica rápida, «Mis errores» repite las manos exactas que fallaste (en la mesa o en la práctica) hasta que aciertes cada una 3 veces seguidas. Las más falladas salen más seguido. También se abre desde Progreso y desde el entrenador.
 - **Modo examen**: un zapato completo sin pistas, tabla ni correcciones. Al salir la carta de corte ves tu nota, el resultado en dinero y los errores, con un botón para repasarlos. Se inicia desde Progreso.
-- **Progreso**: saldo, resultado y porcentaje de acierto de cada jugador, tus errores más comunes y las últimas decisiones. El historial se guarda en el navegador.
+- **Progreso**: saldo, resultado y porcentaje de acierto de cada jugador, una gráfica del resultado acumulado por ronda, tus errores más comunes y las últimas decisiones. El historial se guarda en el navegador.
 - **Tabla de estrategia** (manos duras, suaves y parejas) que se ajusta a las reglas de la mesa y resalta la casilla de tu mano.
 - **Conteo Hi-Lo** opcional (cuenta corrida y cuenta real).
 - **Sonido real**: grabaciones de cartas y fichas para el reparto, la carta del crupier al voltearse, las apuestas, los pagos, la recogida de fichas y la barajada. Cada puesto suena desde su lado en estéreo. También hay un tono opcional de acierto o error y una voz del crupier opcional (usa la voz del sistema).

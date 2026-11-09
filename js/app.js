@@ -23,11 +23,15 @@ function activeChip() {
   if (!set.includes(state.chip)) state.chip = set[0];
   return state.chip;
 }
-const COLORS = ['#e8b04b', '#5fb3e8', '#ef7a62', '#8fd17a', '#c48be8', '#ec8fc2', '#6fdccd', '#e6dc7a'];
+// Colores de los jugadores, en orden fijo. Paleta categórica validada para fondo oscuro
+// (separación para daltonismo y contraste ≥ 3:1 sobre los paneles).
+const COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+const OLD_COLORS = ['#e8b04b', '#5fb3e8', '#ef7a62', '#8fd17a', '#c48be8', '#ec8fc2', '#6fdccd', '#e6dc7a'];
+const HISTORY_MAX = 400;
 const STORE = 'bj-entrenador-v1';
 const LOG_MAX = 300;
 // Versión de los datos guardados; al subirla, load() migra lo que guardaron versiones anteriores.
-const DATA_VERSION = 2;
+const DATA_VERSION = 3;
 // Cuánto sube cada puesto para seguir la curva de la mesa (el puesto 4 es el centro).
 const SEAT_LIFT = [0.58, 0.24, 0.07, 0, 0.07, 0.24, 0.58];
 
@@ -73,6 +77,7 @@ const state = {
   feedback: null,
   hintShown: false,
   log: [],
+  history: [], // resultado de cada jugador humano al final de cada ronda
   notice: '', // error de apuesta, se muestra en la barra inferior
   event: null, // aviso breve sobre la mesa { text, until }
   summary: null, // resultado de la última ronda
@@ -109,6 +114,7 @@ function save() {
         players: state.players,
         seats: state.seats.map((s) => ({ playerId: s.playerId, bet: s.bet })),
         log: state.log,
+        history: state.history,
         version: DATA_VERSION,
       }),
     );
@@ -130,6 +136,17 @@ function load() {
     if ((data.version || 1) < 2 && state.settings.minBet === 10) state.settings.minBet = 5;
     state.players = data.players.map((p) => ({ rebuys: 0, ...p, stats: { decisions: 0, correct: 0, hands: 0, ...p.stats } }));
     if (Array.isArray(data.log)) state.log = data.log.slice(0, LOG_MAX);
+    if (Array.isArray(data.history)) state.history = data.history.slice(-HISTORY_MAX);
+    // Hasta la versión 3 los jugadores usaban otra paleta: se pasa cada color a su nuevo par.
+    if ((data.version || 1) < 3) {
+      const remap = (c) => (OLD_COLORS.includes(c) ? COLORS[OLD_COLORS.indexOf(c)] : c);
+      state.players.forEach((p) => {
+        p.color = remap(p.color);
+      });
+      state.log.forEach((l) => {
+        l.color = remap(l.color);
+      });
+    }
     (data.seats || []).forEach((s, i) => {
       if (i < SEATS && state.players.some((p) => p.id === s.playerId)) {
         state.seats[i].playerId = s.playerId;
@@ -392,6 +409,7 @@ async function deal() {
     if (seat.bet < S().minBet) seat.bet = 0;
   }
   botBets(true);
+  recordHistory();
   if (state.exam) {
     state.exam.rounds++;
     if (state.needShuffle || state.exam.endAfterRound) {
@@ -1494,6 +1512,212 @@ function openReview() {
   openDialog('#dlg-drill');
 }
 
+/* ───────────────────────── Gráfica de resultado ───────────────────────── */
+
+/** Guarda el resultado neto de cada jugador humano al terminar la ronda. */
+function recordHistory() {
+  const humans = state.players.filter((p) => !p.isBot);
+  if (!humans.length) return;
+  const last = state.history[state.history.length - 1];
+  const point = { r: (last ? last.r : 0) + 1, v: {} };
+  for (const p of humans) point.v[p.id] = Math.round(netOf(p) * 100) / 100;
+  state.history.push(point);
+  if (state.history.length > HISTORY_MAX) state.history.splice(0, state.history.length - HISTORY_MAX);
+}
+
+const compactMoney = (v) => {
+  const a = Math.abs(v);
+  const sign = v < 0 ? '−' : '';
+  if (a >= 1e6) return `${sign}$${(a / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 })}M`;
+  if (a >= 1e4) return `${sign}$${(a / 1e3).toLocaleString('es-CO', { maximumFractionDigits: 1 })}k`;
+  return `${sign}$${Math.round(a).toLocaleString('es-CO')}`;
+};
+
+function niceStep(range, count) {
+  const raw = range / count;
+  const mag = 10 ** Math.floor(Math.log10(raw || 1));
+  const norm = raw / mag;
+  return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, parent) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  if (parent) parent.appendChild(el);
+  return el;
+}
+
+/**
+ * Línea del resultado acumulado de cada jugador humano por ronda: un solo eje en dinero,
+ * el cero marcado, valor al final de cada línea, leyenda si hay varios jugadores, cruz que
+ * se ajusta a la ronda más cercana con todos los valores, y los datos también como tabla.
+ */
+function drawBankChart(box) {
+  const hist = state.history;
+  const players = state.players.filter((p) => !p.isBot && hist.some((h) => p.id in h.v));
+  box.textContent = '';
+  if (hist.length < 2 || !players.length) {
+    const p = document.createElement('p');
+    p.className = 'empty-note';
+    p.textContent = 'Juega unas rondas para ver aquí cómo va tu resultado.';
+    box.appendChild(p);
+    return;
+  }
+  const W = 600;
+  const H = 220;
+  const pad = { l: 56, r: 70, t: 12, b: 26 };
+  const r0 = hist[0].r;
+  const r1 = hist[hist.length - 1].r;
+  let lo = 0;
+  let hi = 0;
+  for (const h of hist) for (const p of players) if (p.id in h.v) {
+    lo = Math.min(lo, h.v[p.id]);
+    hi = Math.max(hi, h.v[p.id]);
+  }
+  if (hi === lo) hi = lo + 10;
+  const step = niceStep(hi - lo, 4);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  const x = (r) => pad.l + ((r - r0) / Math.max(1, r1 - r0)) * (W - pad.l - pad.r);
+  const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+
+  if (players.length > 1) {
+    const legend = document.createElement('div');
+    legend.className = 'chart-legend';
+    for (const p of players) {
+      const item = document.createElement('span');
+      const key = document.createElement('i');
+      key.style.background = p.color;
+      item.append(key, document.createTextNode(p.name));
+      legend.appendChild(item);
+    }
+    box.appendChild(legend);
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap-svg';
+  box.appendChild(wrap);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Resultado acumulado por ronda' }, wrap);
+  // Cuadrícula y eje Y
+  for (let v = lo; v <= hi + 1e-9; v += step) {
+    svgEl('line', { x1: pad.l, x2: W - pad.r, y1: y(v), y2: y(v), class: v === 0 ? 'zero' : 'grid' }, svg);
+    const t = svgEl('text', { x: pad.l - 8, y: y(v) + 4, class: 'tick', 'text-anchor': 'end' }, svg);
+    t.textContent = v > 0 ? `+${compactMoney(v)}` : compactMoney(v);
+  }
+  // Eje X: primera y última ronda, y una intermedia
+  const xticks = [...new Set([r0, Math.round((r0 + r1) / 2), r1])];
+  for (const r of xticks) {
+    const t = svgEl('text', { x: x(r), y: H - 6, class: 'tick', 'text-anchor': 'middle' }, svg);
+    t.textContent = `Ronda ${r}`;
+  }
+  // Líneas y valor final
+  const ends = [];
+  for (const p of players) {
+    const pts = hist.filter((h) => p.id in h.v).map((h) => [x(h.r), y(h.v[p.id])]);
+    svgEl('path', { d: pts.map((q, i) => `${i ? 'L' : 'M'}${q[0].toFixed(1)},${q[1].toFixed(1)}`).join(''), class: 'series', stroke: p.color }, svg);
+    const lastPt = pts[pts.length - 1];
+    svgEl('circle', { cx: lastPt[0], cy: lastPt[1], r: 4, fill: p.color, class: 'end' }, svg);
+    ends.push({ y: lastPt[1], x: lastPt[0], v: hist[hist.length - 1].v[p.id] });
+  }
+  // Etiquetas finales sin encimarse: si dos quedan muy juntas, la segunda va solo en la leyenda y la ayuda.
+  ends.sort((a, b) => a.y - b.y);
+  let lastY = -Infinity;
+  for (const e of ends) {
+    if (e.v === undefined || e.y - lastY < 14) continue;
+    const t = svgEl('text', { x: e.x + 9, y: e.y + 4, class: 'endlabel' }, svg);
+    t.textContent = e.v > 0 ? `+${compactMoney(e.v)}` : compactMoney(e.v);
+    lastY = e.y;
+  }
+  // Cruz y ayuda al pasar el puntero
+  const cross = svgEl('line', { y1: pad.t, y2: H - pad.b, class: 'cross', visibility: 'hidden' }, svg);
+  const hit = svgEl('rect', { x: pad.l, y: 0, width: W - pad.l - pad.r, height: H, fill: 'transparent', tabindex: 0 }, svg);
+  const tip = document.createElement('div');
+  tip.className = 'chart-tip';
+  tip.hidden = true;
+  wrap.appendChild(tip);
+  const show = (idx) => {
+    const h = hist[idx];
+    cross.setAttribute('x1', x(h.r));
+    cross.setAttribute('x2', x(h.r));
+    cross.setAttribute('visibility', 'visible');
+    tip.textContent = '';
+    const head = document.createElement('div');
+    head.className = 'tip-head';
+    head.textContent = `Ronda ${h.r}`;
+    tip.appendChild(head);
+    for (const p of players) {
+      if (!(p.id in h.v)) continue;
+      const row = document.createElement('div');
+      row.className = 'tip-row';
+      const key = document.createElement('i');
+      key.style.background = p.color;
+      const val = document.createElement('b');
+      val.textContent = signed(h.v[p.id]);
+      const name = document.createElement('span');
+      name.textContent = p.name;
+      row.append(key, val, name);
+      tip.appendChild(row);
+    }
+    tip.hidden = false;
+    const rect = svg.getBoundingClientRect();
+    const px = (x(h.r) / W) * rect.width;
+    tip.style.left = `${Math.min(px + 12, rect.width - tip.offsetWidth - 4)}px`;
+  };
+  const nearest = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    const r = r0 + (((clientX - rect.left) / rect.width) * W - pad.l) / (W - pad.l - pad.r) * (r1 - r0);
+    let best = 0;
+    hist.forEach((h, i) => {
+      if (Math.abs(h.r - r) < Math.abs(hist[best].r - r)) best = i;
+    });
+    return best;
+  };
+  let focusIdx = hist.length - 1;
+  hit.addEventListener('pointermove', (e) => show((focusIdx = nearest(e.clientX))));
+  hit.addEventListener('pointerleave', () => {
+    tip.hidden = true;
+    cross.setAttribute('visibility', 'hidden');
+  });
+  hit.addEventListener('focus', () => show(focusIdx));
+  hit.addEventListener('blur', () => {
+    tip.hidden = true;
+    cross.setAttribute('visibility', 'hidden');
+  });
+  hit.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      focusIdx = Math.max(0, Math.min(hist.length - 1, focusIdx + (e.key === 'ArrowRight' ? 1 : -1)));
+      show(focusIdx);
+      e.preventDefault();
+    }
+  });
+
+  // Los mismos datos como tabla (últimas 30 rondas)
+  const details = document.createElement('details');
+  details.className = 'chart-table';
+  const sum = document.createElement('summary');
+  sum.textContent = 'Ver los datos';
+  const table = document.createElement('table');
+  const headRow = table.createTHead().insertRow();
+  for (const label of ['Ronda', ...players.map((p) => p.name)]) {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headRow.appendChild(th);
+  }
+  const body = table.createTBody();
+  for (const h of hist.slice(-30).reverse()) {
+    const tr = body.insertRow();
+    tr.insertCell().textContent = String(h.r);
+    for (const p of players) tr.insertCell().textContent = p.id in h.v ? signed(h.v[p.id]) : '—';
+  }
+  const reset = document.createElement('button');
+  reset.className = 'btn ghost small';
+  reset.dataset.action = 'clear-history';
+  reset.textContent = 'Empezar la gráfica de cero';
+  details.append(sum, table, reset);
+  box.appendChild(details);
+}
+
 function renderProgress() {
   const players = [...state.players].sort((a, b) => a.isBot - b.isBot);
   const rows = players
@@ -1519,6 +1743,8 @@ function renderProgress() {
       <thead><tr><th>Jugador</th><th>Saldo</th><th>Resultado</th><th>Manos</th><th>Acierto</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
+    <h3>Resultado por ronda</h3>
+    <div id="bank-chart" class="bank-chart"></div>
     <h3>Errores más comunes</h3>
     ${top.length
       ? `<ul class="list">${top
@@ -1547,6 +1773,7 @@ function renderProgress() {
       <span class="spacer"></span>
       <button class="btn ghost small danger" data-action="clear-log" ${state.log.length ? '' : 'disabled'}>Borrar historial</button>
     </div>`;
+  drawBankChart($('#bank-chart'));
 }
 
 /* ───────────────────────── Práctica rápida ───────────────────────── */
@@ -2043,6 +2270,11 @@ document.addEventListener('click', (e) => {
     case 'open-progress':
       renderProgress();
       openDialog('#dlg-progress');
+      break;
+    case 'clear-history':
+      state.history = [];
+      save();
+      renderProgress();
       break;
     case 'clear-log':
       state.log = [];
