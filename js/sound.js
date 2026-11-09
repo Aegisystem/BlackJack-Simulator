@@ -104,14 +104,9 @@ function out(pan) {
   return p;
 }
 
-/** Reproduce una grabación del grupo. Devuelve su duración, o 0 si no está disponible. */
-function play(group, { pan = 0, delay = 0, gain = 1, rate = [0.94, 1.06] } = {}) {
-  if (!ensure()) return 0;
-  let names = GROUPS[group].filter((n) => buffers[n]);
-  if (!names.length) return 0;
-  if (names.length > 1) names = names.filter((n) => n !== last[group]);
-  const name = names[Math.floor(Math.random() * names.length)];
-  last[group] = name;
+/** Reproduce una grabación concreta. Devuelve su duración, o 0 si no está disponible. */
+function playName(name, { pan = 0, delay = 0, gain = 1, rate = [0.94, 1.06] } = {}) {
+  if (!ensure() || !buffers[name]) return 0;
   const src = ctx.createBufferSource();
   src.buffer = buffers[name];
   src.playbackRate.value = rand(rate[0], rate[1]);
@@ -120,6 +115,17 @@ function play(group, { pan = 0, delay = 0, gain = 1, rate = [0.94, 1.06] } = {})
   src.connect(g).connect(out(pan));
   src.start(at(delay));
   return src.buffer.duration / src.playbackRate.value;
+}
+
+/** Reproduce una variante al azar del grupo, sin repetir la anterior. */
+function play(group, opts) {
+  if (!ensure()) return 0;
+  let names = GROUPS[group].filter((n) => buffers[n]);
+  if (!names.length) return 0;
+  if (names.length > 1) names = names.filter((n) => n !== last[group]);
+  const name = names[Math.floor(Math.random() * names.length)];
+  last[group] = name;
+  return playName(name, opts);
 }
 
 /* ───────────── Respaldo sintetizado (si una grabación no cargó) ───────────── */
@@ -178,6 +184,44 @@ export function flip(pan = 0, delay = 0) {
 /** Fichas sobre la mesa: una ficha suelta o una pila. */
 export function chips(n = 1, pan = 0, delay = 0) {
   if (!play(n > 1 ? 'stack' : 'lay', { pan, delay, gain: 0.85 }) && ctx) synthChip(pan, delay);
+}
+
+// Golpes limpios de ficha contra ficha (un solo impacto, sin rebote), de más grave a más
+// brillante. Se eligieron midiendo cada grabación.
+const CLACKS = ['chips-collide-1', 'chips-stack-4', 'chips-stack-1', 'chips-collide-2', 'chips-stack-2', 'chips-stack-5', 'chips-stack-6'];
+// Las fichas grandes suenan un poco más graves y pesadas.
+const WEIGHT = { 5: 1.06, 25: 1.03, 100: 1, 500: 0.95, 1000: 0.91 };
+let combo = 0;
+let lastBet = 0;
+let lastClack = '';
+
+/**
+ * Ficha que el jugador agrega a su apuesta. Si se agregan varias seguidas, cada golpe suena
+ * un poco más agudo y brillante, como una pila que crece. La primera ficha cae en el paño.
+ */
+export function bet(value = 5, pan = 0, first = false) {
+  if (!ensure()) return;
+  const now = performance.now();
+  combo = now - lastBet < 700 ? Math.min(combo + 1, 14) : 0;
+  lastBet = now;
+  const r = (WEIGHT[value] || 1) * (1 + combo * 0.018);
+  const rate = [r * 0.99, r * 1.01];
+  if (first && playName('chip-lay-1', { pan, gain: 1, rate })) return;
+  const top = Math.min(CLACKS.length - 1, 1 + Math.floor(combo / 2));
+  let options = CLACKS.slice(Math.max(0, top - 2), top + 1).filter((n) => buffers[n] && n !== lastClack);
+  if (!options.length) options = CLACKS.filter((n) => buffers[n]);
+  if (!options.length) return synthChip(pan, 0);
+  lastClack = options[Math.floor(Math.random() * options.length)];
+  playName(lastClack, { pan, gain: 1, rate });
+}
+
+/** Duplicar la apuesta: una cascada corta de fichas. */
+export function betDouble(pan = 0) {
+  if (!ensure()) return;
+  [0, 0.055, 0.1].forEach((d, i) => {
+    const name = CLACKS[2 + i * 2];
+    if (!playName(name, { pan, delay: d, gain: 0.9 - i * 0.1, rate: [1 + i * 0.03, 1.01 + i * 0.03] })) synthChip(pan, d);
+  });
 }
 
 /** El crupier paga: apila las fichas junto a la apuesta. */

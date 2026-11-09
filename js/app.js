@@ -692,7 +692,7 @@ function tableEvent(text, ms = 3200) {
 
 /* ───────────────────────── Apuestas y asientos ───────────────────────── */
 
-function addChip(v) {
+function addChip(v, opts = {}) {
   if (state.phase !== 'betting') return;
   const seat = state.seats[state.selectedSeat];
   if (!isHumanSeat(seat)) return notice('Primero toca el círculo de apuesta de un puesto tuyo.');
@@ -700,9 +700,12 @@ function addChip(v) {
   const free = p.bankroll - committedBy(p.id);
   const add = Math.min(v, free, S().maxBet - seat.bet);
   if (add <= 0) return notice(free <= 0 ? `${p.name} no tiene más saldo libre.` : `La apuesta máxima es ${fmt(S().maxBet)}.`);
+  const first = seat.bet === 0;
   seat.bet += add;
+  seat.betAt = performance.now();
   state.notice = '';
-  sfx.chips(add >= 100 ? 2 : 1, panFor(state.selectedSeat));
+  if (opts.double) sfx.betDouble(panFor(state.selectedSeat));
+  else sfx.bet(v, panFor(state.selectedSeat), first);
   render();
 }
 
@@ -742,10 +745,30 @@ const ICON = {
 const LABELS = { ...ACTIONS, I: 'Tomar seguro', N: 'Sin seguro' };
 const RESULT_TEXT = { win: 'Gana', lose: 'Pierde', bust: 'Se pasa', push: 'Empate', bj: 'Blackjack', sur: 'Rendición' };
 
-function chipColor(amount) {
-  let c = CHIPS[0];
-  for (const v of CHIPS) if (amount >= v) c = v;
-  return `var(--chip-${c})`;
+/**
+ * La apuesta como una pila de fichas: abajo las de más valor, arriba la de menos, que
+ * lleva el monto. Si la apuesta acaba de crecer, la ficha de arriba cae sobre la pila.
+ */
+function chipStackHTML(amount, pop) {
+  const discs = [];
+  let rest = amount;
+  for (const v of [...CHIPS].reverse()) {
+    while (rest >= v - 1e-9 && discs.length < 60) {
+      discs.push(v);
+      rest -= v;
+    }
+  }
+  if (!discs.length) discs.push(CHIPS[0]);
+  // Como mucho 7 fichas a la vista: se conservan la base y la de arriba.
+  const shown = discs.length > 7 ? [...discs.slice(0, 6), discs[discs.length - 1]] : discs;
+  const n = shown.length;
+  const top = shown[n - 1];
+  const lower = shown
+    .slice(0, -1)
+    .map((v, i) => `<i class="disc" style="--c:var(--chip-${v});--i:${i}"></i>`)
+    .join('');
+  const style = pop ? `;animation-delay:${-Math.round(pop)}ms` : '';
+  return `<span class="stack${pop !== null ? ' pop' : ''}" style="--n:${n}" aria-hidden="true">${lower}<span class="chip-mini top" style="--c:var(--chip-${top});--i:${n - 1}${style}">${shortMoney(amount)}</span></span>`;
 }
 
 /* Animaciones de cartas. Cada carta guarda cuándo se repartió, se volteó o se movió; si la
@@ -944,7 +967,8 @@ function seatHTML(seat, si) {
 
   const shownBet = betting ? seat.bet : n ? seat.lastBet : 0;
   let inner;
-  if (shownBet > 0) inner = `<span class="chip-mini" style="--c:${chipColor(shownBet)}">${shortMoney(shownBet)}</span>`;
+  const sinceBet = seat.betAt ? performance.now() - seat.betAt : Infinity;
+  if (shownBet > 0) inner = chipStackHTML(shownBet, betting && sinceBet < 280 ? sinceBet : null);
   else if (human && betting) inner = '<span class="spot-hint">Apostar</span>';
   else inner = `<span class="spot-num">${si + 1}</span>`;
 
@@ -1511,7 +1535,7 @@ document.addEventListener('click', (e) => {
       break;
     case 'double-bet': {
       const seat = state.seats[state.selectedSeat];
-      if (isHumanSeat(seat)) addChip(seat.bet || S().minBet);
+      if (isHumanSeat(seat)) addChip(seat.bet || S().minBet, { double: true });
       break;
     }
     case 'select-seat': {
@@ -1769,7 +1793,11 @@ render();
 let resizeTimer = 0;
 addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(fitSeats, 80);
+  resizeTimer = setTimeout(() => {
+    fitSeats();
+    lastFocus = '';
+    keepSeatInView();
+  }, 80);
 });
 
 // Solo para pruebas: ?debug expone el estado en la consola.

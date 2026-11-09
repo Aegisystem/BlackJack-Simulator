@@ -428,11 +428,35 @@ kbd {
 }
 .seat.empty .spot-tag { display: none; }
 
+/* Pila de fichas de la apuesta: cada ficha asoma 3 px bajo la siguiente. */
+.spot { --chip: 46px; }
+.stack {
+  position: relative;
+  display: block;
+  width: var(--chip);
+  height: calc(var(--chip) + (var(--n) - 1) * 3px);
+  margin-top: calc((var(--n) - 1) * -3px);
+}
+.stack > .disc, .stack > .top { position: absolute; left: 50%; bottom: calc(var(--i) * 3px); transform: translateX(-50%); }
+.stack > .disc {
+  width: var(--chip); height: var(--chip);
+  border-radius: 50%;
+  background: repeating-conic-gradient(var(--c) 0 22.5deg, #fbf8f1 22.5deg 45deg);
+  box-shadow: 0 2px 0 #0007, inset 0 0 0 2px #0002;
+}
+/* La ficha nueva cae sobre la pila y rebota un poco. */
+.stack.pop > .top { animation: chip-drop .28s var(--ease-out) both; }
+@keyframes chip-drop {
+  0% { transform: translate(-50%, -18px) scale(1.12); }
+  62% { transform: translate(-50%, 1px) scale(.97); }
+  100% { transform: translate(-50%, 0) scale(1); }
+}
+
 .chip-mini {
   position: relative;
   isolation: isolate;
   display: grid; place-items: center;
-  width: 46px; height: 46px;
+  width: var(--chip, 46px); height: var(--chip, 46px);
   border-radius: 50%;
   background: repeating-conic-gradient(var(--c) 0 22.5deg, #fbf8f1 22.5deg 45deg);
   box-shadow: 0 3px 0 #0007, 0 6px 10px -4px #000c, inset 0 0 0 2px #0002;
@@ -545,7 +569,7 @@ kbd {
 }
 .chip::before { content: ''; position: absolute; inset: 18%; z-index: -1; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px #0000002e; }
 .chip:hover { transform: translateY(-3px); box-shadow: 0 7px 0 #0008, 0 12px 18px -8px #000c, inset 0 0 0 3px #0003; }
-.chip:active { transform: translateY(1px); box-shadow: 0 2px 0 #0008, inset 0 0 0 3px #0003; }
+.chip:active { transform: translateY(2px) scale(.95); box-shadow: 0 1px 0 #0008, inset 0 0 0 3px #0003; transition-duration: .05s; }
 .chip.c25 { --c: var(--chip-25); }
 .chip.c100 { --c: var(--chip-100); }
 .chip.c500 { --c: var(--chip-500); }
@@ -758,7 +782,8 @@ input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
   :root { --cw: 66px; }
   .dealer { --cw-base: 66px; }
   .spot { width: 74px; height: 74px; }
-  .chip-mini { width: 54px; height: 54px; font-size: 12px; }
+  .spot { --chip: 54px; }
+  .chip-mini { font-size: 12px; }
   .who { font-size: 14px; }
   .bank, .hand-meta, .total { font-size: 13px; }
   .banner strong { font-size: 18px; }
@@ -775,7 +800,8 @@ input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
   .felt-print .sub { display: none; }
   .banner { padding: 7px 18px; }
   .spot { width: 56px; height: 56px; }
-  .chip-mini { width: 40px; height: 40px; font-size: 10px; }
+  .spot { --chip: 40px; }
+  .chip-mini { font-size: 10px; }
   .seat { gap: 6px; }
   .dock { min-height: 0; padding-block: 10px; }
   .coach-foot { margin-top: 4px; }
@@ -853,6 +879,6 @@ input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .card.fresh, .card.slid, .card.flipper, .card.gone, .drill .card.fresh, .dlg[open] { animation: none; }
+  .card.fresh, .card.slid, .card.flipper, .card.gone, .drill .card.fresh, .stack.pop > .top, .dlg[open] { animation: none; }
   .hand, .chip, .btn { transition: none; }
 }
