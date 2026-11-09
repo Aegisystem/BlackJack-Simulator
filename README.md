@@ -10,6 +10,9 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Dividir hasta 5 manos** por puesto, incluso dividir una mano que ya viene de dividir. Puedes elegir si se vuelven a dividir los Ases.
 - **Corrección de cada decisión**: después de cada jugada te dice si coincide con la estrategia básica y por qué.
 - **Pistas** opcionales que muestran la jugada correcta antes de decidir.
+- **Seguro**: cuando el crupier muestra un As te ofrece seguro (paga 2 a 1), y te corrige si lo tomas.
+- **Práctica rápida**: manos sueltas para memorizar la tabla sin apostar, con aciertos y racha.
+- **Tus errores más comunes**: agrupa las situaciones en las que más te equivocas. El historial se guarda en el navegador.
 - **Tabla de estrategia** (manos duras, suaves y parejas) que se ajusta a las reglas de la mesa y resalta la casilla de tu mano.
 - **Conteo Hi-Lo** opcional (cuenta corrida y cuenta real).
 - **Corte aleatorio**: por defecto, en cada barajada la carta de corte cae en un punto al azar entre el 45% y el 55% del zapato, para que no sepas cuándo se va a barajar.
@@ -26,6 +29,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 | `D` | Doblar |
 | `P` | Dividir |
 | `R` | Rendirse |
+| `I` / `N` | Tomar seguro / Sin seguro |
 | `?` | Pista |
 | `T` | Abrir o cerrar la tabla de estrategia |
 

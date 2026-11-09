@@ -21,6 +21,7 @@
       </div>
     </div>
     <nav class="top-actions">
+      <button class="btn ghost" data-action="drill">Práctica rápida</button>
       <button class="btn ghost" data-action="chart">Tabla <kbd>T</kbd></button>
       <button class="btn ghost" data-action="open-players">Jugadores</button>
       <button class="btn ghost" data-action="open-rules">Reglas</button>
@@ -73,6 +74,16 @@
       <span><i class="k-Rp">Rp</i> Rendirse (si no, dividir)</span>
     </div>
     <p class="muted small">La tabla se ajusta a las reglas de la mesa. Durante tu turno se resalta la casilla de tu mano. Nunca tomes seguro.</p>
+  </dialog>
+
+  <!-- Práctica rápida -->
+  <dialog id="dlg-drill" class="dlg">
+    <div class="dlg-head">
+      <h2>Práctica rápida</h2>
+      <button class="x" data-action="close" aria-label="Cerrar">×</button>
+    </div>
+    <p class="muted">Manos sueltas para memorizar la tabla, sin apostar. Los errores se suman a «Tus errores más comunes».</p>
+    <div id="drill-body" class="drill"></div>
   </dialog>
 
   <!-- Jugadores -->

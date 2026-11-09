@@ -8,6 +8,7 @@ const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
 const CHIPS = [5, 25, 100, 500, 1000];
 const COLORS = ['#e8b04b', '#5fb3e8', '#ef7a62', '#8fd17a', '#c48be8', '#ec8fc2', '#6fdccd', '#e6dc7a'];
 const STORE = 'bj-entrenador-v1';
+const LOG_MAX = 300;
 
 const DEFAULT_SETTINGS = {
   decks: 6,
@@ -78,6 +79,7 @@ function save() {
         settings: state.settings,
         players: state.players,
         seats: state.seats.map((s) => ({ playerId: s.playerId, bet: s.bet })),
+        log: state.log,
       }),
     );
   } catch {
@@ -95,6 +97,7 @@ function load() {
   if (data && Array.isArray(data.players) && data.players.length) {
     state.settings = { ...DEFAULT_SETTINGS, ...data.settings };
     state.players = data.players;
+    if (Array.isArray(data.log)) state.log = data.log.slice(0, LOG_MAX);
     (data.seats || []).forEach((s, i) => {
       if (i < SEATS && state.players.some((p) => p.id === s.playerId)) {
         state.seats[i].playerId = s.playerId;
@@ -278,6 +281,7 @@ async function deal() {
 
   const up = state.dealer.cards[0];
   let dealerBJ = false;
+  if (up.rank === 'A') await offerInsurance();
   if (cardValue(up) >= 10) {
     await wait(450);
     dealerBJ = isBlackjack(state.dealer.cards);
@@ -368,9 +372,58 @@ function askHuman(o, rec) {
   });
 }
 
+const INSURANCE_REASON =
+  'El seguro es una apuesta aparte: paga 2 a 1 si el crupier tiene Blackjack, pero eso pasa menos de 1 de cada 3 veces. A la larga pierde dinero, así que la estrategia básica nunca lo toma, ni siquiera el "pago igual" con tu Blackjack.';
+
+async function offerInsurance() {
+  for (let si = 0; si < SEATS; si++) {
+    const seat = state.seats[si];
+    const hand = seat.hands[0];
+    if (!hand || !isHumanSeat(seat)) continue;
+    const player = getPlayer(seat.playerId);
+    const cost = hand.bet / 2;
+    if (player.bankroll < cost) continue;
+    state.turn = { si, hi: 0 };
+    const take = await new Promise((resolve) => {
+      state.pending = { kind: 'insurance', cost, resolve };
+      render();
+    });
+    if (take) {
+      player.bankroll -= cost;
+      hand.insurance = cost;
+    }
+    player.stats.decisions++;
+    if (!take) player.stats.correct++;
+    const entry = {
+      ok: !take,
+      player: player.name,
+      color: player.color,
+      seat: si + 1,
+      hand: 1,
+      desc: `Seguro con ${describeHand(hand.cards)} vs As`,
+      key: 'Seguro',
+      chosen: take ? 'I' : 'N',
+      rec: 'N',
+      reason: INSURANCE_REASON,
+    };
+    state.feedback = entry;
+    state.log.unshift(entry);
+    state.log = state.log.slice(0, LOG_MAX);
+  }
+  state.turn = null;
+  render();
+}
+
 function humanAct(act) {
   const pend = state.pending;
-  if (!pend || !isLegal(act, pend.o)) return;
+  if (!pend) return;
+  if (pend.kind === 'insurance') {
+    if (act !== 'I' && act !== 'N') return;
+    state.pending = null;
+    pend.resolve(act === 'I');
+    return;
+  }
+  if (!isLegal(act, pend.o)) return;
   state.pending = null;
   pend.resolve(act);
 }
@@ -406,7 +459,7 @@ function judge(player, si, hi, hand, act, rec) {
   };
   state.feedback = entry;
   state.log.unshift(entry);
-  state.log = state.log.slice(0, 30);
+  state.log = state.log.slice(0, LOG_MAX);
 }
 
 async function apply(seat, hi, act, player) {
@@ -498,8 +551,13 @@ function settle() {
       else if (dealerBust || t > d) { back = h.bet * 2; kind = 'win'; }
       else if (t === d) { back = h.bet; kind = 'push'; }
       else kind = 'lose';
+      let net = back - h.bet;
+      if (h.insurance) {
+        if (dealerBJ) back += h.insurance * 3;
+        net += dealerBJ ? h.insurance * 2 : -h.insurance;
+      }
       p.bankroll += back;
-      h.result = { kind, net: back - h.bet };
+      h.result = { kind, net, ins: h.insurance ? (dealerBJ ? 'cobra' : 'pierde') : null };
     }
   }
 }
@@ -595,7 +653,7 @@ function renderSeats() {
     const hands = seat.hands.map((h, hi) => {
       const active = isTurnSeat && state.turn.hi === hi && !h.done;
       const r = h.result;
-      const badge = r ? `<span class="badge ${r.kind}">${RESULT_TEXT[r.kind]}${r.net ? ` ${r.net > 0 ? '+' : '−'}${fmt(Math.abs(r.net))}` : ''}</span>` : '';
+      const badge = r ? `<span class="badge ${r.kind}">${RESULT_TEXT[r.kind]}${r.ins ? ` · seguro ${r.ins}` : ''}${r.net ? ` ${r.net > 0 ? '+' : '−'}${fmt(Math.abs(r.net))}` : ''}</span>` : '';
       const cards = h.cards.map((c, ci) => cardHTML(c, { side: h.doubled && ci === h.cards.length - 1 })).join('');
       return `<div class="hand${active ? ' active' : ''}${h.done && !r ? ' done' : ''}${r ? ' res-' + r.kind : ''}">
         <div class="cards">${cards}</div>
@@ -657,6 +715,18 @@ function renderControls() {
     return;
   }
   const cur = currentHumanHand();
+  if (cur && state.pending.kind === 'insurance') {
+    const { hand, player } = cur;
+    const showRec = S().showHint || state.hintShown;
+    el.innerHTML = `
+      <div class="ctl-line"><span class="dot" style="background:${player.color}"></span> <b>${esc(player.name)}</b> · Puesto ${state.turn.si + 1} — <b>${describeHand(hand.cards)}</b> vs <b>As</b>. El crupier ofrece seguro por ${fmt(state.pending.cost)}.</div>
+      <div class="btn-row actions">
+        <button class="btn act" data-action="act" data-act="I">Tomar seguro <kbd>I</kbd></button>
+        <button class="btn act${showRec ? ' rec' : ''}" data-action="act" data-act="N">Sin seguro <kbd>N</kbd></button>
+      </div>
+      <div class="btn-row"><button class="btn ghost small" data-action="hint">Pista <kbd>?</kbd></button></div>`;
+    return;
+  }
   if (cur) {
     const { o, rec } = state.pending;
     const { seat, hand, player } = cur;
@@ -686,7 +756,9 @@ function renderCoach() {
   const el = $('#coach');
   const parts = [];
   const cur = currentHumanHand();
-  if (cur && (S().showHint || state.hintShown)) {
+  if (cur && state.pending.kind === 'insurance' && (S().showHint || state.hintShown)) {
+    parts.push(`<div class="tip hint"><div class="tip-h">Estrategia básica: <b>Sin seguro</b></div><p>${esc(INSURANCE_REASON)}</p></div>`);
+  } else if (cur && (S().showHint || state.hintShown)) {
     const { rec } = state.pending;
     parts.push(`<div class="tip hint"><div class="tip-h">Estrategia básica: <b>${ACTIONS[rec.action]}</b>${rec.ideal !== rec.action ? ` <span class="muted">(la tabla dice ${ACTIONS[rec.ideal]})</span>` : ''}</div><p>${esc(rec.reason)}</p></div>`);
   }
@@ -694,7 +766,7 @@ function renderCoach() {
   if (f && S().feedback) {
     parts.push(`<div class="tip ${f.ok ? 'ok' : 'bad'}">
       <div class="tip-h">${f.ok ? '✓ Correcto' : '✗ Error'} — ${esc(f.desc)}</div>
-      <p>${f.ok ? `Elegiste <b>${ACTIONS[f.chosen]}</b>.` : `Elegiste <b>${ACTIONS[f.chosen]}</b>; lo correcto era <b>${ACTIONS[f.rec]}</b>.`} ${esc(f.reason)}</p>
+      <p>${f.ok ? `Elegiste <b>${LABELS[f.chosen]}</b>.` : `Elegiste <b>${LABELS[f.chosen]}</b>; lo correcto era <b>${LABELS[f.rec]}</b>.`} ${esc(f.reason)}</p>
     </div>`);
   }
   if (state.message) parts.push(`<div class="tip note">${esc(state.message)}</div>`);
@@ -702,11 +774,34 @@ function renderCoach() {
     parts.push(`<div class="tip note">Juega tus manos y aquí verás si tu decisión coincide con la estrategia básica. Activa <b>Pistas</b> en Reglas para verla antes de decidir.</div>`);
   }
   if (state.log.length && S().feedback) {
-    parts.push(`<details class="log"><summary>Historial de decisiones (${state.log.length})</summary><ol>${state.log
-      .map((l) => `<li class="${l.ok ? 'ok' : 'bad'}"><span class="dot" style="background:${l.color}"></span>${esc(l.desc)}: ${ACTIONS[l.chosen]}${l.ok ? '' : ` → <b>${ACTIONS[l.rec]}</b>`}</li>`)
+    const top = commonMistakes();
+    if (top.length) {
+      parts.push(`<details class="log"><summary>Tus errores más comunes</summary><ol>${top
+        .map((m) => `<li class="bad"><span class="mcount">${m.n}×</span>${esc(m.desc)}: lo correcto es <b>${LABELS[m.rec]}</b></li>`)
+        .join('')}</ol><button class="btn ghost small" data-action="clear-log">Borrar historial</button></details>`);
+    }
+    parts.push(`<details class="log"><summary>Últimas decisiones (${Math.min(state.log.length, 40)} de ${state.log.length})</summary><ol>${state.log
+      .slice(0, 40)
+      .map((l) => `<li class="${l.ok ? 'ok' : 'bad'}"><span class="dot" style="background:${l.color}"></span>${esc(l.desc)}: ${LABELS[l.chosen]}${l.ok ? '' : ` → <b>${LABELS[l.rec]}</b>`}</li>`)
       .join('')}</ol></details>`);
   }
   el.innerHTML = parts.join('');
+}
+
+const LABELS = { ...ACTIONS, I: 'Tomar seguro', N: 'Sin seguro' };
+
+/** Situaciones en las que más se equivocan los jugadores humanos. */
+function commonMistakes() {
+  const map = new Map();
+  for (const l of state.log) {
+    if (l.ok) continue;
+    const desc = l.key || l.desc;
+    const k = `${desc}|${l.rec}`;
+    const m = map.get(k) || { desc, rec: l.rec, n: 0 };
+    m.n++;
+    map.set(k, m);
+  }
+  return [...map.values()].sort((a, b) => b.n - a.n).slice(0, 6);
 }
 
 function renderRoster() {
@@ -763,6 +858,95 @@ function keepSeatInView() {
   sc.scrollTo({ left: target, behavior: 'smooth' });
 }
 
+/* ───────────────────────── Práctica rápida ───────────────────────── */
+
+const drill = { cards: [], up: null, rec: null, answer: null, n: 0, ok: 0, streak: 0, best: 0, timer: 0 };
+
+function rnd(n) {
+  return Math.floor(randomUnit() * n);
+}
+
+function randCard(ranks = RANKS) {
+  return { rank: ranks[rnd(ranks.length)], suit: SUITS[rnd(4)], id: uid('d') };
+}
+
+function drillNext() {
+  clearTimeout(drill.timer);
+  const roll = randomUnit();
+  const noAce = RANKS.filter((r) => r !== 'A');
+  let cards;
+  if (roll < 0.3) {
+    // Cada pareja (2-2 … 10-10, A-A) sale con la misma frecuencia.
+    const kinds = ['A', '2', '3', '4', '5', '6', '7', '8', '9', 'T'];
+    const k = kinds[rnd(kinds.length)];
+    const r = k === 'T' ? ['10', 'J', 'Q', 'K'][rnd(4)] : k;
+    cards = [{ rank: r, suit: SUITS[rnd(4)] }, { rank: r, suit: SUITS[rnd(4)] }];
+  } else if (roll < 0.55) {
+    cards = [{ rank: 'A', suit: SUITS[rnd(4)] }, randCard(['2', '3', '4', '5', '6', '7', '8', '9'])];
+  } else {
+    // Duras: se descartan las parejas y casi todas las manos triviales (18 o más).
+    for (;;) {
+      cards = [randCard(noAce), randCard(noAce)];
+      const t = handValue(cards).total;
+      if (isPair(cards) || (t >= 18 && randomUnit() > 0.15)) continue;
+      break;
+    }
+  }
+  drill.cards = cards.map((c) => ({ ...c, id: uid('d'), fresh: true }));
+  drill.up = { ...randCard(), fresh: true };
+  drill.rec = bestAction(drill.cards, drill.up, drillOptions());
+  drill.answer = null;
+  renderDrill();
+}
+
+function drillOptions() {
+  return { canDouble: true, canSplit: isPair(drill.cards), canSurrender: S().surrender, h17: S().h17, das: S().das };
+}
+
+function drillAnswer(act) {
+  if (drill.answer || !isLegal(act, { ...drillOptions(), canHit: true })) return;
+  const ok = act === drill.rec.action;
+  drill.answer = act;
+  drill.n++;
+  if (ok) {
+    drill.ok++;
+    drill.streak++;
+    drill.best = Math.max(drill.best, drill.streak);
+  } else drill.streak = 0;
+  const up = drill.up.rank === 'A' ? 'As' : String(cardValue(drill.up));
+  const desc = `${describeHand(drill.cards)} vs ${up}`;
+  state.log.unshift({ ok, player: 'Práctica', color: '#e3b45a', seat: 0, hand: 0, desc, key: desc, chosen: act, rec: drill.rec.action, reason: drill.rec.reason });
+  state.log = state.log.slice(0, LOG_MAX);
+  save();
+  renderDrill();
+  render();
+  if (ok) drill.timer = setTimeout(() => { if ($('#dlg-drill').open) drillNext(); }, delay(900));
+}
+
+function renderDrill() {
+  const o = { ...drillOptions(), canHit: true };
+  const a = drill.answer;
+  const ok = a && a === drill.rec.action;
+  const btn = (k) => {
+    let cls = '';
+    if (a && k === drill.rec.action) cls = ' rec';
+    else if (a && k === a) cls = ' wrong';
+    return `<button class="btn act${cls}" data-action="drill-act" data-act="${k}" ${isLegal(k, o) && !a ? '' : 'disabled'}>${ACTIONS[k]} <kbd>${k}</kbd></button>`;
+  };
+  const pct = drill.n ? Math.round((drill.ok / drill.n) * 100) : 0;
+  $('#drill-body').innerHTML = `
+    <div class="drill-stats"><span>Aciertos <b>${drill.ok}/${drill.n}</b> (${pct}%)</span><span>Racha <b>${drill.streak}</b></span><span>Mejor racha <b>${drill.best}</b></span></div>
+    <div class="drill-felt">
+      <div class="drill-side"><span>Crupier</span><div class="cards">${cardHTML(drill.up)}</div></div>
+      <div class="drill-side"><span>Tú · ${describeHand(drill.cards)}</span><div class="cards">${drill.cards.map((c) => cardHTML(c)).join('')}</div></div>
+    </div>
+    <div class="btn-row actions">${['H', 'S', 'D', 'P', 'R'].map(btn).join('')}</div>
+    ${a ? `<div class="tip ${ok ? 'ok' : 'bad'}"><div class="tip-h">${ok ? '✓ Correcto' : `✗ Lo correcto es ${ACTIONS[drill.rec.action]}`}</div><p>${esc(drill.rec.reason)}</p></div>
+      <div class="btn-row"><span class="spacer"></span><button class="btn primary" data-action="drill-next">Siguiente <kbd>Espacio</kbd></button></div>` : '<p class="muted small">Elige la jugada. Es la primera decisión de la mano, así que puedes doblar; rendirse solo si está activado en Reglas.</p>'}`;
+  drill.cards.forEach((c) => { c.fresh = false; });
+  drill.up.fresh = false;
+}
+
 /* ───────────────────────── Tabla de estrategia ───────────────────────── */
 
 const C = (rank) => ({ rank: String(rank), suit: '♠' });
@@ -805,7 +989,7 @@ function rowsFor(tab) {
 
 function currentCell() {
   const cur = currentHumanHand();
-  if (!cur) return null;
+  if (!cur || state.pending.kind === 'insurance') return null;
   const { hand } = cur;
   const up = cardValue(state.dealer.cards[0]);
   const col = up === 11 ? 'A' : up;
@@ -940,6 +1124,14 @@ document.addEventListener('click', (e) => {
     case 'leave': sit(Number(el.dataset.seat), null); break;
     case 'act': humanAct(el.dataset.act); break;
     case 'hint': state.hintShown = true; render(); break;
+    case 'drill':
+      if (!drill.cards.length || drill.answer) drillNext();
+      else renderDrill();
+      $('#dlg-drill').showModal();
+      break;
+    case 'drill-act': drillAnswer(el.dataset.act); break;
+    case 'drill-next': drillNext(); break;
+    case 'clear-log': state.log = []; state.feedback = null; save(); render(); break;
     case 'chart': openChart(); break;
     case 'chart-tab': chartTab = el.dataset.tab; renderChart(); break;
     case 'open-players': renderPlayersForm(); $('#dlg-players').showModal(); break;
@@ -999,9 +1191,14 @@ document.addEventListener('change', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (document.querySelector('dialog[open]') && e.key.toLowerCase() !== 't') return;
   const k = e.key.toLowerCase();
-  if (state.pending && ['h', 's', 'd', 'p', 'r'].includes(k)) { humanAct(k.toUpperCase()); e.preventDefault(); return; }
+  if ($('#dlg-drill').open) {
+    if (['h', 's', 'd', 'p', 'r'].includes(k)) { drillAnswer(k.toUpperCase()); e.preventDefault(); }
+    else if ((k === ' ' || k === 'enter') && drill.answer) { drillNext(); e.preventDefault(); }
+    return;
+  }
+  if (document.querySelector('dialog[open]') && k !== 't') return;
+  if (state.pending && ['h', 's', 'd', 'p', 'r', 'i', 'n'].includes(k)) { humanAct(k.toUpperCase()); e.preventDefault(); return; }
   if (k === '?' || (k === '/' && e.shiftKey)) { state.hintShown = true; render(); return; }
   if (k === 't') {
     const d = $('#dlg-chart');
