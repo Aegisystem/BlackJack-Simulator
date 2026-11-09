@@ -77,6 +77,7 @@ const state = {
   event: null, // aviso breve sobre la mesa { text, until }
   summary: null, // resultado de la última ronda
   chip: null, // ficha marcada: tocar un círculo propio pone una de este valor
+  exam: null, // examen en curso: un zapato completo sin ayudas
 };
 
 let uidN = 0;
@@ -289,7 +290,7 @@ function canDeal() {
 }
 
 async function deal() {
-  if (state.phase !== 'betting') return;
+  if (state.phase !== 'betting' || (state.exam && state.exam.ending)) return;
   botBets(false);
   if (!canDeal()) return notice(`Pon al menos ${fmt(S().minBet)} en un puesto para repartir.`);
   for (const p of state.players) {
@@ -391,6 +392,14 @@ async function deal() {
     if (seat.bet < S().minBet) seat.bet = 0;
   }
   botBets(true);
+  if (state.exam) {
+    state.exam.rounds++;
+    if (state.needShuffle || state.exam.endAfterRound) {
+      // Se deja ver el resultado de la última mano antes de mostrar la nota.
+      state.exam.ending = true;
+      setTimeout(finishExam, delay(1200));
+    }
+  }
   // Los bots ponen sus fichas para la próxima mano cuando el crupier termina de pagar.
   state.seats.forEach((seat, si) => {
     const p = seat.playerId && getPlayer(seat.playerId);
@@ -532,6 +541,7 @@ async function offerInsurance() {
     player.stats.decisions++;
     if (!take) player.stats.correct++;
     feedbackSound(!take);
+    examRecord(!take, `Seguro con ${describeHand(hand.cards)} vs As`, take ? 'I' : 'N', 'N', player);
     logDecision({
       ok: !take,
       player: player.name,
@@ -584,7 +594,7 @@ function logDecision(entry) {
 }
 
 function feedbackSound(ok) {
-  if (!S().feedback || !S().feedbackSound) return;
+  if (state.exam || !S().feedback || !S().feedbackSound) return;
   if (ok) sfx.good();
   else sfx.bad();
 }
@@ -593,6 +603,7 @@ function judge(player, si, hi, hand, act, rec, o) {
   const ok = act === rec.action;
   const late = state.timedOut;
   state.timedOut = false;
+  examRecord(ok, `${describeHand(hand.cards)} vs ${upLabel()}`, act, rec.action, player);
   player.stats.decisions++;
   if (ok) player.stats.correct++;
   feedbackSound(ok);
@@ -1017,12 +1028,12 @@ function renderDealer() {
 function bannerContent() {
   const ev = state.event && state.event.until > Date.now() ? state.event.text : '';
   if (state.phase === 'betting') {
-    if (state.summary) return state.summary;
+    if (state.summary) return state.exam && !state.summary.note ? { ...state.summary, note: 'Examen en curso' } : state.summary;
     const anyHuman = state.seats.some((s) => isHumanSeat(s));
     return {
       title: 'Hagan sus apuestas',
       sub: anyHuman ? 'Marca una ficha y toca tu círculo para apostar' : 'Siéntate en un puesto libre para jugar',
-      note: state.needShuffle ? 'Se baraja antes de la próxima mano' : '',
+      note: state.exam ? 'Examen en curso: sin ayudas hasta la carta de corte' : state.needShuffle ? 'Se baraja antes de la próxima mano' : '',
     };
   }
   if (state.pending && state.pending.kind === 'insurance') {
@@ -1188,10 +1199,14 @@ function renderDockInfo() {
       : `<b>${describeHand(cur.hand.cards)}</b> contra <b>${upLabel()}</b>`;
     el.innerHTML = `${whoHTML(cur.player, `Puesto ${cur.si + 1}${handNo}`)}
       <div class="info-line">${line}</div>
-      <div class="tools">
+      ${
+        state.exam
+          ? ''
+          : `<div class="tools">
         <button class="btn ghost small" data-action="hint">${ICON.bulb}Pista <kbd>?</kbd></button>
         <button class="btn ghost small" data-action="chart">${ICON.grid}Tabla <kbd>T</kbd></button>
-      </div>`;
+      </div>`
+      }`;
     return;
   }
   let text = 'Repartiendo…';
@@ -1220,7 +1235,7 @@ function renderControls() {
     return;
   }
   const cur = currentHumanHand();
-  const showRec = !!cur && (S().showHint || state.hintShown);
+  const showRec = !!cur && !state.exam && (S().showHint || state.hintShown);
   const timer = cur && state.pending.ms
     ? `<div class="timer" role="timer" aria-label="Tiempo para decidir" style="--t:${state.pending.ms}ms"><i style="animation-delay:${-Math.round(performance.now() - state.pending.started)}ms"></i></div>`
     : '';
@@ -1255,6 +1270,14 @@ function renderCoach() {
   const cur = currentHumanHand();
   const humans = state.players.filter((p) => !p.isBot);
   let html;
+  if (state.exam) {
+    const ex = state.exam;
+    html = `${coachCard('exam', ICON.grid, 'Examen en curso', `Sin pistas ni correcciones hasta que salga la carta de corte. Llevas ${ex.decisions} ${ex.decisions === 1 ? 'decisión' : 'decisiones'}.`, false)}
+      <div class="coach-foot"><span>Las respuestas se ven al final.</span><span class="links"><button class="link" data-action="end-exam">Terminar examen</button></span></div>`;
+    el.classList.toggle('open', coachOpen);
+    el.innerHTML = html;
+    return;
+  }
   if (cur && (S().showHint || state.hintShown)) {
     if (state.pending.kind === 'insurance') html = coachCard('hint', ICON.bulb, 'Pista: sin seguro', INSURANCE_REASON);
     else {
@@ -1310,6 +1333,68 @@ function keepSeatInView() {
   if (key === lastFocus) return;
   lastFocus = key;
   sc.scrollTo({ left: focus.offsetLeft - (sc.clientWidth - focus.offsetWidth) / 2, behavior: 'smooth' });
+}
+
+/* ───────────────────────── Examen ───────────────────────── */
+
+/** Un zapato nuevo y completo, sin pistas, tabla ni correcciones; la nota se ve al final. */
+function startExam() {
+  if (state.phase !== 'betting') return;
+  if (!state.seats.some((s) => isHumanSeat(s))) return notice('Siéntate en un puesto para hacer el examen.');
+  const humans = state.players.filter((p) => !p.isBot);
+  state.exam = { decisions: 0, correct: 0, misses: [], rounds: 0, startNet: new Map(humans.map((p) => [p.id, netOf(p)])) };
+  state.needShuffle = true;
+  state.hintShown = false;
+  state.feedback = null;
+  state.summary = null;
+  ['#dlg-progress', '#dlg-drill', '#dlg-chart'].forEach((id) => $(id).open && $(id).close());
+  tableEvent('Examen: un zapato completo sin ayudas', 4000);
+  render();
+}
+
+function examRecord(ok, desc, chosen, rec, player) {
+  const ex = state.exam;
+  if (!ex) return;
+  ex.decisions++;
+  if (ok) ex.correct++;
+  else ex.misses.push({ desc, chosen, rec, player: player.name });
+}
+
+function finishExam() {
+  const ex = state.exam;
+  if (!ex) return;
+  state.exam = null;
+  const pct = ex.decisions ? Math.round((ex.correct / ex.decisions) * 100) : 0;
+  const grade = !ex.decisions ? 'Sin decisiones' : pct >= 98 ? 'Perfecto' : pct >= 92 ? 'Muy bien' : pct >= 80 ? 'Bien, pero repasa' : 'A repasar';
+  const money = [...ex.startNet]
+    .map(([id, start]) => {
+      const p = getPlayer(id);
+      if (!p) return '';
+      const d = netOf(p) - start;
+      return `<li><span class="dot" style="--c:${p.color}"></span><span class="grow">${esc(p.name)}</span><b class="${d > 0 ? 'up' : d < 0 ? 'down' : ''}">${signed(d)}</b></li>`;
+    })
+    .join('');
+  const misses = ex.misses
+    .map((m) => `<li class="bad">${ICON.cross}<span class="grow">${esc(m.desc)}</span><span>${LABELS[m.chosen]} → <b>${LABELS[m.rec]}</b></span></li>`)
+    .join('');
+  $('#exam-body').innerHTML = `
+    <div class="exam-score">
+      <strong>${ex.decisions ? `${pct}%` : '—'}</strong>
+      <span>${grade}</span>
+      <em>${ex.correct} de ${ex.decisions} decisiones correctas en ${ex.rounds} ${ex.rounds === 1 ? 'ronda' : 'rondas'}</em>
+    </div>
+    <h3>Resultado en dinero</h3>
+    <ul class="list">${money}</ul>
+    <h3>Errores (${ex.misses.length})</h3>
+    ${misses ? `<ul class="list">${misses}</ul>` : '<p class="empty-note">Ninguno. Jugaste todo el zapato con estrategia básica perfecta.</p>'}
+    <div class="btn-row">
+      ${ex.misses.length ? '<button class="btn primary" data-action="open-review">Repasar estos errores</button>' : ''}
+      <button class="btn ghost" data-action="start-exam">Otro examen</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" data-action="close">Cerrar</button>
+    </div>`;
+  render();
+  openDialog('#dlg-exam');
 }
 
 /* ───────────────────────── Progreso ───────────────────────── */
@@ -1402,6 +1487,7 @@ const pendingReview = () => reviewStats().filter((e) => !e.mastered);
 
 function openReview() {
   if ($('#dlg-progress').open) $('#dlg-progress').close();
+  if ($('#dlg-exam').open) $('#dlg-exam').close();
   drill.mode = 'review';
   drill.key = null;
   drillNext();
@@ -1454,7 +1540,13 @@ function renderProgress() {
           .map((l) => `<li class="${l.ok ? 'ok' : 'bad'}">${l.ok ? ICON.check : ICON.cross}<span class="dot" style="--c:${l.color}"></span><span class="grow">${esc(l.desc)}</span><span>${LABELS[l.chosen]}${l.ok ? '' : ` → <b>${LABELS[l.rec]}</b>`}</span></li>`)
           .join('')}</ul>`
       : '<p class="empty-note">Juega una mano o usa la práctica rápida para empezar el historial.</p>'}
-    <div class="btn-row"><button class="btn ghost small danger" data-action="clear-log" ${state.log.length ? '' : 'disabled'}>Borrar historial</button></div>`;
+    <h3>Examen</h3>
+    <p class="muted small">Juega un zapato completo sin pistas, tabla ni correcciones. Al salir la carta de corte ves tu nota y tus errores.</p>
+    <div class="btn-row">
+      <button class="btn primary small" data-action="start-exam" ${state.phase === 'betting' && !state.exam ? '' : 'disabled'}>${state.exam ? 'Examen en curso' : 'Empezar examen'}</button>
+      <span class="spacer"></span>
+      <button class="btn ghost small danger" data-action="clear-log" ${state.log.length ? '' : 'disabled'}>Borrar historial</button>
+    </div>`;
 }
 
 /* ───────────────────────── Práctica rápida ───────────────────────── */
@@ -1905,7 +1997,16 @@ document.addEventListener('click', (e) => {
       humanAct(el.dataset.act);
       break;
     case 'hint':
+      if (state.exam) break;
       state.hintShown = true;
+      render();
+      break;
+    case 'start-exam':
+      startExam();
+      break;
+    case 'end-exam':
+      if (state.phase === 'betting') finishExam();
+      else if (state.exam) state.exam.endAfterRound = true;
       render();
       break;
     case 'toggle-sound':
@@ -1916,6 +2017,11 @@ document.addEventListener('click', (e) => {
       $('#coach').classList.toggle('open', coachOpen);
       break;
     case 'drill':
+      if (state.exam) {
+        tableEvent('Durante el examen no se puede usar la práctica');
+        renderBanner();
+        break;
+      }
       if (!drill.cards.length || drill.answer) drillNext();
       else renderDrill();
       openDialog('#dlg-drill');
@@ -1946,6 +2052,11 @@ document.addEventListener('click', (e) => {
       if ($('#dlg-progress').open) renderProgress();
       break;
     case 'chart':
+      if (state.exam) {
+        tableEvent('Durante el examen no se puede ver la tabla');
+        renderBanner();
+        break;
+      }
       openChart();
       break;
     case 'chart-tab':
@@ -2084,7 +2195,7 @@ document.addEventListener('keydown', (e) => {
     toggleSound();
     return;
   }
-  if (k === 't') {
+  if (k === 't' && !state.exam) {
     const d = $('#dlg-chart');
     if (d.open) d.close();
     else if (!document.querySelector('dialog[open]')) openChart();
@@ -2097,7 +2208,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
-  if (e.key === '?' && state.pending) {
+  if (e.key === '?' && state.pending && !state.exam) {
     state.hintShown = true;
     render();
     return;

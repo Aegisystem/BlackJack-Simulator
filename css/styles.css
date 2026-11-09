@@ -656,6 +656,8 @@ kbd {
 .coach-card.bad .coach-title { color: var(--bad-2); }
 .coach-card.hint .coach-title { color: var(--gold-2); }
 .coach-card.idle .coach-title { color: var(--text-2); }
+.coach-card.exam { border-color: #e6b65c5c; background: #e6b65c0d; }
+.coach-card.exam .coach-title { color: var(--gold-2); }
 .coach-text { margin: 4px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); }
 .coach-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .coach-foot .links { display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
@@ -785,6 +787,14 @@ table.chart { width: 100%; min-width: 480px; border-collapse: separate; border-s
 }
 .pill.ok { background: #74d59626; color: var(--ok); }
 .empty-note { color: var(--muted); font-size: 13px; }
+
+/* Examen */
+.exam-score { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 0 6px; text-align: center; }
+.exam-score strong { font: 700 52px/1 var(--font-display); color: var(--gold-2); font-variant-numeric: tabular-nums; }
+.exam-score span { font-size: 18px; font-weight: 700; }
+.exam-score em { font-style: normal; font-size: 13px; color: var(--muted); }
+.list .up { color: var(--ok); }
+.list .down { color: var(--bad); }
 
 /* Jugadores */
 .players-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 0; }
