@@ -58,11 +58,11 @@ kbd {
   border-radius: 6px;
   background: var(--card);
   color: var(--red);
-  font: 700 20px 'Fraunces', serif;
+  font: 700 20px 'Bodoni Moda', serif;
   box-shadow: 3px 3px 0 var(--gold);
   transform: rotate(-6deg);
 }
-.brand h1 { margin: 0; font: 700 22px/1.1 'Fraunces', serif; letter-spacing: .01em; }
+.brand h1 { margin: 0; font: 700 22px/1.1 'Bodoni Moda', serif; letter-spacing: .01em; }
 .brand p { margin: 0; color: var(--muted); font-size: 13px; }
 .top-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
@@ -121,7 +121,7 @@ main { padding: 0 clamp(8px, 2vw, 24px) 32px; max-width: 1500px; margin: 0 auto;
 }
 .shoe-bar { height: 6px; border-radius: 3px; background: #0006; overflow: hidden; }
 .shoe-bar i { display: block; height: 100%; background: var(--gold); transition: width .3s; }
-.shoe-txt { margin-top: 4px; opacity: .8; }
+.shoe-txt { margin-top: 4px; }
 .count {
   margin-top: 6px;
   display: inline-grid;
@@ -131,7 +131,7 @@ main { padding: 0 clamp(8px, 2vw, 24px) 32px; max-width: 1500px; margin: 0 auto;
   padding: 6px 10px;
   border-radius: 8px;
 }
-.count span { opacity: .7; text-align: left; }
+.count span { opacity: .85; text-align: left; }
 .count b { font-size: 14px; }
 
 .dealer { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 8px; min-height: 120px; }
@@ -143,19 +143,18 @@ main { padding: 0 clamp(8px, 2vw, 24px) 32px; max-width: 1500px; margin: 0 auto;
   font-weight: 700;
   font-size: 14px;
 }
-.dealer-total.empty { background: transparent; color: #ffffff66; font: 500 12px 'DM Sans'; letter-spacing: .2em; text-transform: uppercase; }
+.dealer-total.empty { background: transparent; color: #ffffffb3; font: 500 12px 'DM Sans'; letter-spacing: .2em; text-transform: uppercase; }
 
 .felt-rules {
   margin: 14px 0 6px;
   text-align: center;
-  font: 700 clamp(14px, 2vw, 20px)/1.25 'Fraunces', serif;
+  font: 700 clamp(14px, 2vw, 20px)/1.25 'Bodoni Moda', serif;
   letter-spacing: .14em;
   text-transform: uppercase;
   color: #f2d48a;
-  opacity: .85;
   text-shadow: 0 1px 0 #0006;
 }
-.felt-rules span { display: block; font: 500 12px 'DM Sans'; letter-spacing: .2em; color: #e9f2ea; opacity: .7; margin-top: 4px; }
+.felt-rules span { display: block; font: 500 12px 'DM Sans'; letter-spacing: .2em; color: #e9f2ea; opacity: .9; margin-top: 4px; }
 
 /* ───── Cartas ───── */
 .cards { display: flex; justify-content: center; padding-right: calc(var(--cw) * .55); }
@@ -169,7 +168,7 @@ main { padding: 0 clamp(8px, 2vw, 24px) 32px; max-width: 1500px; margin: 0 auto;
   background: var(--card);
   color: var(--ink);
   box-shadow: 0 2px 6px #0007, inset 0 0 0 1px #0000001a;
-  font-family: 'Fraunces', serif;
+  font-family: 'Bodoni Moda', serif;
   user-select: none;
 }
 .card.red { color: var(--red); }
@@ -289,12 +288,12 @@ main { padding: 0 clamp(8px, 2vw, 24px) 32px; max-width: 1500px; margin: 0 auto;
   font-size: 11px;
   box-shadow: 0 3px 0 #0006;
 }
-.bet-hint { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #ffffff66; }
-.seat-num { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: #ffffff77; }
+.bet-hint { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #ffffffb3; }
+.seat-num { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: #ffffffb3; }
 .seat-player { display: flex; align-items: center; gap: 5px; font-weight: 700; font-size: 13px; max-width: 100%; }
 .pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seat-bank { font-size: 12px; color: #f2d48a; }
-.seat-empty { font-size: 12px; color: #ffffff55; }
+.seat-empty { font-size: 12px; color: #ffffffa6; }
 .leave {
   border: 0; background: #0005; border-radius: 50%;
   width: 18px; height: 18px; line-height: 16px; padding: 0;
@@ -366,15 +365,15 @@ select.sit {
   border-radius: 12px;
   padding: 10px 12px;
   background: var(--panel-2);
-  border-left: 4px solid var(--line);
 }
 .tip p { margin: 4px 0 0; color: #d4ddd6; }
 .tip-h { font-weight: 700; }
-.tip.ok { border-left-color: var(--ok); }
+.tip.ok { background: #6fd18f14; }
 .tip.ok .tip-h { color: var(--ok); }
-.tip.bad { border-left-color: var(--bad); }
+.tip.bad { background: #f07a6a14; }
 .tip.bad .tip-h { color: var(--bad); }
-.tip.hint { border-left-color: var(--gold); }
+.tip.hint { background: #e3b45a14; }
+.tip.hint .tip-h { color: var(--gold); }
 .tip.note { color: var(--muted); }
 .log summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .log ol { margin: 8px 0 0; padding-left: 0; list-style: none; max-height: 200px; overflow: auto; font-size: 13px; }
@@ -418,7 +417,7 @@ select.sit {
 .dlg.wide { width: min(760px, calc(100vw - 32px)); }
 .dlg::backdrop { background: #000a; backdrop-filter: blur(3px); }
 .dlg-head { display: flex; justify-content: space-between; align-items: center; }
-.dlg h2 { margin: 0; font: 700 22px 'Fraunces', serif; }
+.dlg h2 { margin: 0; font: 700 22px 'Bodoni Moda', serif; }
 .x { border: 0; background: none; font-size: 26px; cursor: pointer; color: var(--muted); line-height: 1; }
 .warn { background: #4b3a14; color: #f2d48a; padding: 8px 10px; border-radius: 8px; }
 

@@ -12,7 +12,8 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Pistas** opcionales que muestran la jugada correcta antes de decidir.
 - **Tabla de estrategia** (manos duras, suaves y parejas) que se ajusta a las reglas de la mesa y resalta la casilla de tu mano.
 - **Conteo Hi-Lo** opcional (cuenta corrida y cuenta real).
-- **Reglas configurables**: número de mazos, penetración, S17 o H17, doblar después de dividir, rendición tardía, pago del blackjack (3 a 2 o 6 a 5) y apuestas mínima y máxima.
+- **Corte aleatorio**: por defecto, en cada barajada la carta de corte cae en un punto al azar entre el 50% y el 80% del zapato, para que no sepas cuándo se va a barajar.
+- **Reglas configurables**: de 1 a 8 mazos, carta de corte (aleatoria o fija), S17 o H17, doblar después de dividir, rendición tardía, pago del blackjack (3 a 2 o 6 a 5) y apuestas mínima y máxima.
 - Los saldos, las estadísticas y las reglas se guardan en el navegador (`localStorage`).
 
 ## Atajos de teclado
