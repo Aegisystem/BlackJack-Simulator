@@ -55,6 +55,14 @@ python3 -m http.server 8000
 
 Luego abre <http://localhost:8000>.
 
+## Pruebas
+
+La estrategia se compara casilla por casilla con las tablas publicadas de Wizard of Odds (4 a 8 mazos con S17 y H17, sin doblar tras dividir, sin rendición y la variante europea sin carta oculta). Requiere Node 18 o más reciente:
+
+```bash
+npm test
+```
+
 ## Publicar en GitHub Pages
 
 1. Sube el contenido de esta carpeta a la rama `main` del repositorio.
@@ -74,6 +82,7 @@ css/styles.css    Estilos de la mesa
 js/strategy.js    Estrategia básica (funciones puras)
 js/app.js         Juego, bots, interfaz y guardado
 js/sound.js       Sonidos y voz del crupier
+tests/            Pruebas de la estrategia (node --test)
 sounds/           Grabaciones de cartas y fichas (MP3)
 icons/            Iconos de la app
 manifest.webmanifest, sw.js   App instalable y modo sin internet
