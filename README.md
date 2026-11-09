@@ -24,6 +24,7 @@ Simulador de blackjack para practicar la **estrategia básica**. Es un sitio est
 - **Apuestas rápidas**: las fichas se adaptan a la apuesta mínima de la mesa (con mínimo de 5.000 son 5k, 25k, 100k, 500k y 1M). También puedes escribir el monto exacto o usar «Máx» para apostar lo más posible.
 - **Perfiles de mesa**: «Pragmatic Play en vivo» (8 mazos, el crupier se planta en 17, una sola división, sin pedir con Ases divididos, sin rendición y el crupier solo revisa su carta con un As) y «Clásica de EE. UU.». La tabla y las correcciones se ajustan: por ejemplo, sin revisión con figura se pide con 11 o con 8-8 contra 10.
 - **Tiempo para decidir** opcional (10 a 30 segundos), como en vivo. Si se acaba, se pide con 11 o menos y se planta con 12 o más.
+- **Apuestas laterales** opcionales (Pares Perfectos y 21+3) con los pagos de las mesas de Pragmatic Play. Se resuelven al repartir y el entrenador muestra cuánto gana la casa con ellas, calculado exacto según el número de mazos (por ejemplo 4,1 % y 3,7 % con 8 mazos).
 - **Reglas configurables**: de 1 a 8 mazos, carta de corte (aleatoria o fija), S17 o H17, doblar después de dividir, rendición tardía, pago del blackjack (3 a 2 o 6 a 5), si el crupier revisa su carta con figura y apuestas mínima y máxima.
 - **Se instala como app** en el celular o el computador y funciona sin internet (service worker). En iPhone: Compartir → «Agregar a inicio».
 - Los saldos, las estadísticas y las reglas se guardan en el navegador (`localStorage`).

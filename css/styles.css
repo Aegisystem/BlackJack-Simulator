@@ -435,6 +435,37 @@ kbd {
 }
 .seat.empty .spot-tag { display: none; }
 
+/* Apuestas laterales a los lados del círculo principal. */
+.spot-row { display: flex; align-items: center; justify-content: center; gap: 4px; }
+.side-spot {
+  --chip: 28px;
+  position: relative;
+  display: grid; place-items: center;
+  width: 32px; height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px dashed #ffffff4d;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color .15s, opacity .2s;
+}
+.side-spot[tabindex="-1"] { cursor: default; }
+.side-spot[data-action]:hover { border-color: #ffffff99; }
+.side-label { font-size: 9px; font-weight: 700; color: var(--felt-ink-2); }
+.side-spot .chip-mini { font-size: 9px; }
+.side-spot.won { border-style: solid; border-color: var(--gold); }
+.side-spot.lost { opacity: .45; }
+.side-win {
+  position: absolute; bottom: -11px; left: 50%;
+  transform: translateX(-50%);
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--gold);
+  color: var(--gold-ink);
+  font-size: 10px; font-weight: 700;
+  white-space: nowrap;
+}
+
 /* Pila de fichas de la apuesta: cada ficha asoma 3 px bajo la siguiente. */
 .spot { --chip: 46px; }
 .stack {

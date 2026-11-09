@@ -54,6 +54,7 @@ const DEFAULT_SETTINGS = {
   peek: 'us', // 'us': el crupier revisa si tiene Blackjack con As o figura · 'ace': solo con As
   noPeekLoss: 'all', // si no revisó y tiene Blackjack: 'all' se pierde todo · 'original' solo la apuesta inicial
   decisionTime: 0, // segundos para decidir; 0 = sin límite
+  sideBets: false, // apuestas laterales: Pares Perfectos y 21+3
   sound: true,
   volume: 0.7,
   feedbackSound: true,
@@ -63,7 +64,7 @@ const DEFAULT_SETTINGS = {
 const state = {
   settings: { ...DEFAULT_SETTINGS },
   players: [],
-  seats: Array.from({ length: SEATS }, () => ({ playerId: null, bet: 0, lastBet: 0, hands: [] })),
+  seats: Array.from({ length: SEATS }, () => ({ playerId: null, bet: 0, lastBet: 0, hands: [], side: { pp: 0, t3: 0 } })),
   shoe: [],
   shoeSize: 0,
   cutAt: 0,
@@ -112,7 +113,7 @@ function save() {
       JSON.stringify({
         settings: state.settings,
         players: state.players,
-        seats: state.seats.map((s) => ({ playerId: s.playerId, bet: s.bet })),
+        seats: state.seats.map((s) => ({ playerId: s.playerId, bet: s.bet, side: s.side })),
         log: state.log,
         history: state.history,
         version: DATA_VERSION,
@@ -151,6 +152,7 @@ function load() {
       if (i < SEATS && state.players.some((p) => p.id === s.playerId)) {
         state.seats[i].playerId = s.playerId;
         state.seats[i].bet = s.bet || 0;
+        if (s.side) state.seats[i].side = { pp: s.side.pp || 0, t3: s.side.t3 || 0 };
       }
     });
   } else {
@@ -176,8 +178,8 @@ const S = () => state.settings;
 const PROFILES = {
   // Pragmatic Play Live Blackjack: 8 mazos, S17, una sola división, sin pedir con Ases divididos,
   // doblar tras dividir (salvo Ases), sin rendición; el crupier solo revisa su carta con un As.
-  pragmatic: { decks: 8, h17: false, das: true, surrender: false, maxHands: 2, resplitAces: false, hitSplitAces: false, bjPays: 1.5, peek: 'ace', noPeekLoss: 'all', decisionTime: 15 },
-  usa: { decks: 6, h17: false, das: true, surrender: true, maxHands: 4, resplitAces: true, hitSplitAces: false, bjPays: 1.5, peek: 'us', noPeekLoss: 'all', decisionTime: 0 },
+  pragmatic: { decks: 8, h17: false, das: true, surrender: false, maxHands: 2, resplitAces: false, hitSplitAces: false, bjPays: 1.5, peek: 'ace', noPeekLoss: 'all', decisionTime: 15, sideBets: true },
+  usa: { decks: 6, h17: false, das: true, surrender: true, maxHands: 4, resplitAces: true, hitSplitAces: false, bjPays: 1.5, peek: 'us', noPeekLoss: 'all', decisionTime: 0, sideBets: false },
 };
 
 /** El crupier no revisó si tiene Blackjack con esta carta y, si lo tiene, se lleva también lo doblado y dividido. */
@@ -280,8 +282,10 @@ function recommend(hand, o) {
 
 /* ───────────────────────── Flujo de la ronda ───────────────────────── */
 
+const sideSum = (seat) => (S().sideBets ? seat.side.pp + seat.side.t3 : 0);
+
 function committedBy(playerId) {
-  return state.seats.filter((s) => s.playerId === playerId).reduce((a, s) => a + s.bet, 0);
+  return state.seats.filter((s) => s.playerId === playerId).reduce((a, s) => a + s.bet + sideSum(s), 0);
 }
 
 /** Los bots eligen su apuesta al empezar las apuestas, para que se vea en la mesa. */
@@ -332,13 +336,19 @@ async function deal() {
   state.dealer = { cards: [], hidden: true };
   for (const seat of state.seats) {
     seat.hands = [];
+    seat.sideStake = null;
+    seat.sideResult = null;
     if (seat.playerId && seat.bet >= S().minBet) {
       const p = getPlayer(seat.playerId);
       p.bankroll -= seat.bet;
       p.stats.hands++;
       seat.lastBet = seat.bet;
       seat.hands = [{ cards: [], bet: seat.bet }];
-    }
+      if (sideSum(seat)) {
+        seat.sideStake = { ...seat.side };
+        p.bankroll -= sideSum(seat);
+      }
+    } else if (!seat.bet) seat.side = { pp: 0, t3: 0 };
   }
   render();
   if (shuffling) {
@@ -360,6 +370,7 @@ async function deal() {
     render();
   }
 
+  settleSideBets();
   let naturals = 0;
   state.seats.forEach((seat) => {
     for (const h of seat.hands) {
@@ -404,9 +415,10 @@ async function deal() {
   for (const seat of state.seats) {
     const p = seat.playerId && getPlayer(seat.playerId);
     if (!p || p.isBot) continue;
-    const others = committedBy(p.id) - seat.bet;
+    const others = committedBy(p.id) - seat.bet - sideSum(seat);
     seat.bet = Math.min(seat.lastBet || seat.bet, Math.max(0, p.bankroll - others));
     if (seat.bet < S().minBet) seat.bet = 0;
+    if (!seat.bet || p.bankroll - others - seat.bet < sideSum(seat)) seat.side = { pp: 0, t3: 0 };
   }
   botBets(true);
   recordHistory();
@@ -807,6 +819,99 @@ function tableEvent(text, ms = 3200) {
   eventTimer = setTimeout(renderBanner, delay(ms) + 30);
 }
 
+/* ───────────────────────── Apuestas laterales ───────────────────────── */
+// Pagos de las mesas de Pragmatic Play. Pares Perfectos usa tus dos primeras cartas;
+// 21+3 tus dos primeras y la carta visible del crupier. Solo se paga la mejor combinación.
+
+const SIDE_NAMES = { pp: 'Pares Perfectos', t3: '21+3' };
+const isRedCard = (c) => c.suit === '♥' || c.suit === '♦';
+const rankNum = (c) => ({ A: 1, J: 11, Q: 12, K: 13 })[c.rank] || Number(c.rank);
+
+function perfectPairs(a, b) {
+  if (a.rank !== b.rank) return null;
+  if (a.suit === b.suit) return { name: 'Par perfecto', pay: 25 };
+  if (isRedCard(a) === isRedCard(b)) return { name: 'Par del mismo color', pay: 12 };
+  return { name: 'Par mixto', pay: 6 };
+}
+
+function twentyOnePlus3(cards) {
+  const flush = cards.every((c) => c.suit === cards[0].suit);
+  const trips = cards.every((c) => c.rank === cards[0].rank);
+  const run = (v) => v[1] === v[0] + 1 && v[2] === v[1] + 1;
+  const low = cards.map(rankNum).sort((a, b) => a - b);
+  const high = low.map((v) => (v === 1 ? 14 : v)).sort((a, b) => a - b); // Q-K-A
+  const straight = run(low) || run(high);
+  if (trips && flush) return { name: 'Trío del mismo palo', pay: 100 };
+  if (straight && flush) return { name: 'Escalera de color', pay: 40 };
+  if (trips) return { name: 'Trío', pay: 30 };
+  if (straight) return { name: 'Escalera', pay: 10 };
+  if (flush) return { name: 'Color', pay: 5 };
+  return null;
+}
+
+/** Ventaja de la casa exacta para el número de mazos de la mesa (en %). */
+function sideEdges(n = S().decks) {
+  const C3 = (k) => (k * (k - 1) * (k - 2)) / 6;
+  const rest = 52 * n - 1;
+  const pPerfect = (n - 1) / rest;
+  const pColor = n / rest;
+  const pMixed = (2 * n) / rest;
+  const pp = 25 * pPerfect + 12 * pColor + 6 * pMixed - (1 - pPerfect - pColor - pMixed);
+  const total = C3(52 * n);
+  const st = 13 * 4 * C3(n);
+  const sf = 12 * 4 * n ** 3;
+  const tk = 13 * (C3(4 * n) - 4 * C3(n));
+  const str = 12 * ((4 * n) ** 3 - 4 * n ** 3);
+  const fl = 4 * (C3(13 * n) - 12 * n ** 3 - 13 * C3(n));
+  const t3 = (100 * st + 40 * sf + 30 * tk + 10 * str + 5 * fl) / total - (1 - (st + sf + tk + str + fl) / total);
+  const pct = (ev) => (-ev * 100).toLocaleString('es-CO', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+  return { pp: pct(pp), t3: pct(t3) };
+}
+
+function settleSideBets() {
+  const up = state.dealer.cards[0];
+  const wins = [];
+  state.seats.forEach((seat, si) => {
+    const stake = seat.sideStake;
+    if (!stake) return;
+    const p = getPlayer(seat.playerId);
+    const [a, b] = seat.hands[0].cards;
+    seat.sideResult = {};
+    for (const kind of ['pp', 't3']) {
+      const bet = stake[kind];
+      if (!bet) continue;
+      const r = kind === 'pp' ? perfectPairs(a, b) : twentyOnePlus3([a, b, up]);
+      if (r) {
+        p.bankroll += bet * (r.pay + 1);
+        seat.sideResult[kind] = { ...r, net: bet * r.pay };
+        wins.push(`${p.name}: ${r.name} en ${SIDE_NAMES[kind]} (${r.pay} a 1)`);
+        sfx.payout(panFor(si), 0.15, r.pay >= 25);
+      } else {
+        seat.sideResult[kind] = { net: -bet };
+        sfx.collect(panFor(si), 0.1);
+      }
+    }
+  });
+  if (wins.length) tableEvent(wins.join(' · '), 4500);
+  render();
+}
+
+function addSide(kind, v) {
+  if (state.phase !== 'betting') return;
+  const seat = state.seats[state.selectedSeat];
+  if (!isHumanSeat(seat)) return;
+  const p = getPlayer(seat.playerId);
+  if (!seat.bet) return notice('Primero pon tu apuesta principal en el círculo grande.');
+  const free = p.bankroll - committedBy(p.id);
+  const add = Math.min(v, free, S().maxBet - seat.side[kind]);
+  if (add <= 0) return notice(free <= 0 ? `${p.name} no tiene más saldo libre.` : `La apuesta máxima es ${fmt(S().maxBet)}.`);
+  const first = seat.side[kind] === 0;
+  seat.side[kind] += add;
+  state.notice = '';
+  sfx.bet(v, panFor(state.selectedSeat), first);
+  render();
+}
+
 /* ───────────────────────── Apuestas y asientos ───────────────────────── */
 
 function addChip(v, opts = {}) {
@@ -889,6 +994,13 @@ const ICON = {
 
 const LABELS = { ...ACTIONS, I: 'Tomar seguro', N: 'Sin seguro' };
 const RESULT_TEXT = { win: 'Gana', lose: 'Pierde', bust: 'Se pasa', push: 'Empate', bj: 'Blackjack', sur: 'Rendición' };
+
+/** El valor de ficha más alto que cabe en un monto (para el color de la ficha). */
+function chipFor(amount) {
+  let c = LADDER[0];
+  for (const v of LADDER) if (amount >= v) c = v;
+  return c;
+}
 
 /**
  * La apuesta como una pila de fichas: abajo las de más valor, arriba la de menos, que
@@ -1141,10 +1253,27 @@ function seatHTML(seat, si) {
     plate = `<label class="sit"><span class="sr">Sentar a alguien en el puesto ${si + 1}</span><select data-sit="${si}"><option value="">Sentarse</option>${opts}</select></label>`;
   }
 
+  // Apuestas laterales a los lados del círculo principal (solo jugadores humanos).
+  let spotRow = spot;
+  if (S().sideBets && human) {
+    const side = (kind, label) => {
+      const amount = betting ? seat.side[kind] : seat.sideStake ? seat.sideStake[kind] : 0;
+      const res = !betting && seat.sideResult && seat.sideResult[kind];
+      const won = res && res.pay;
+      const lost = res && !res.pay;
+      let inner = `<span class="side-label">${label}</span>`;
+      if (amount && !lost) inner = `<span class="chip-mini" style="--c:var(--chip-${chipFor(amount)})">${shortMoney(amount)}</span>`;
+      const tag = won ? `<span class="side-win">${res.pay}:1</span>` : '';
+      const name = `${SIDE_NAMES[kind]} del puesto ${si + 1}${amount ? `, apuesta ${fmt(amount)}` : ''}${won ? `, gana ${res.name}` : ''}`;
+      return `<button class="side-spot${won ? ' won' : ''}${lost ? ' lost' : ''}" ${betting ? `data-action="side-bet" data-seat="${si}" data-side="${kind}"` : 'tabindex="-1"'} aria-label="${esc(name)}">${inner}${tag}</button>`;
+    };
+    spotRow = `<div class="spot-row">${side('pp', 'PP')}${spot}${side('t3', '21+3')}</div>`;
+  }
+
   // Un puesto con varias manos divididas ocupa más ancho para que no se apilen.
   const w = 1 + Math.max(0, n - 1) * 0.55;
   return `<div class="${cls}" data-si="${si}" style="order:${SEATS - si};--w:${w};--k:${SEAT_LIFT[si]};--pc:${p ? p.color : 'transparent'}">
-    <div class="seat-hands">${hands}</div>${spot}${plate}
+    <div class="seat-hands">${hands}</div>${spotRow}${plate}
   </div>`;
 }
 
@@ -1202,7 +1331,10 @@ function renderDockInfo() {
         ${
           free + seat.bet < S().minBet
             ? `<p class="notice">No te alcanza para la apuesta mínima. <button class="link" data-action="rebuy">Recargar ${fmt(p.startBankroll || 1000)}</button></p>`
-            : note || `<p class="info-hint">Toca tu círculo para poner fichas de <b>${fmt(activeChip())}</b></p>`
+            : note ||
+              (sideSum(seat)
+                ? `<p class="info-hint">Apuestas laterales: a la larga la casa gana ${sideEdges().pp}% en Pares Perfectos y ${sideEdges().t3}% en 21+3.</p>`
+                : `<p class="info-hint">Toca tu círculo para poner fichas de <b>${fmt(activeChip())}</b></p>`)
         }`;
     } else {
       el.innerHTML = `<div class="info-line">Toca el círculo de un puesto tuyo para apostar, o siéntate en un puesto libre.</div>${note}`;
@@ -2076,7 +2208,7 @@ function readPlayersForm() {
   pickSelectedSeat();
 }
 
-const RULE_FIELDS = ['decks', 'h17', 'das', 'surrender', 'maxHands', 'resplitAces', 'hitSplitAces', 'bjPays', 'peek', 'noPeekLoss', 'minBet', 'maxBet', 'penetration', 'showHint', 'feedback', 'showCount', 'speed', 'decisionTime', 'sound', 'volume', 'feedbackSound', 'voice'];
+const RULE_FIELDS = ['decks', 'h17', 'das', 'surrender', 'maxHands', 'resplitAces', 'hitSplitAces', 'bjPays', 'peek', 'noPeekLoss', 'minBet', 'maxBet', 'penetration', 'showHint', 'feedback', 'showCount', 'speed', 'decisionTime', 'sideBets', 'sound', 'volume', 'feedbackSound', 'voice'];
 const TEXT_FIELDS = ['peek', 'noPeekLoss'];
 
 function fillRules() {
@@ -2147,8 +2279,9 @@ function applyProfile(name) {
 function clearBet() {
   const seat = state.seats[state.selectedSeat];
   if (state.phase === 'betting' && isHumanSeat(seat)) {
-    if (seat.bet) sfx.collect(panFor(state.selectedSeat));
+    if (seat.bet || seat.side.pp || seat.side.t3) sfx.collect(panFor(state.selectedSeat));
     seat.bet = 0;
+    seat.side = { pp: 0, t3: 0 };
     state.notice = '';
     render();
   }
@@ -2196,6 +2329,13 @@ document.addEventListener('click', (e) => {
     case 'double-bet': {
       const seat = state.seats[state.selectedSeat];
       if (isHumanSeat(seat)) addChip(seat.bet || S().minBet, { double: true });
+      break;
+    }
+    case 'side-bet': {
+      const si = Number(el.dataset.seat);
+      if (state.phase !== 'betting' || !isHumanSeat(state.seats[si])) break;
+      state.selectedSeat = si;
+      addSide(el.dataset.side, activeChip());
       break;
     }
     case 'select-seat': {
