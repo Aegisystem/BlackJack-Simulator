@@ -152,10 +152,9 @@ kbd {
   min-width: 0;
   padding: 14px 16px 0;
   border-radius: 8px 8px 50% 50% / 8px 8px var(--curve) var(--curve);
-  background:
-    radial-gradient(90% 60% at 50% 0%, #ffffff10, transparent 70%),
-    radial-gradient(140% 120% at 50% 15%, var(--felt-1), var(--felt-2) 55%, var(--felt-3));
-  box-shadow: inset 0 14px 24px -14px #000c, inset 0 -40px 70px -40px #000a, inset 0 0 0 1px #0005;
+  /* Paño iluminado desde el lado del crupier; los bordes se oscurecen con sombras internas. */
+  background: linear-gradient(180deg, #1f6e48 0%, var(--felt-2) 58%, var(--felt-3) 100%);
+  box-shadow: inset 0 14px 24px -14px #000c, inset 0 -40px 70px -40px #000a, inset 0 0 90px -30px #000b, inset 0 0 0 1px #0005;
   overflow: hidden;
 }
 /* Textura del paño */
@@ -363,7 +362,8 @@ kbd {
   padding: 0;
   border-radius: 50%;
   border: 2px solid #ffffff40;
-  background: radial-gradient(circle, transparent 56%, #00000024 58%);
+  background: transparent;
+  box-shadow: inset 0 0 0 5px #0000001f;
   cursor: pointer;
   transition: border-color .15s, box-shadow .2s, background-color .15s;
 }
@@ -371,7 +371,7 @@ kbd {
 .seat:not(.empty) .spot { border-color: var(--pc); }
 .seat.empty .spot { border-style: dashed; }
 .seat.empty .spot[data-action]:hover { border-color: #ffffff80; background-color: #ffffff0d; }
-.seat.selected .spot { border-color: var(--gold); box-shadow: 0 0 0 4px #e6b65c33, 0 8px 16px -8px #000c; }
+.seat.selected .spot { border-color: var(--gold); box-shadow: inset 0 0 0 5px #0000001f, 0 0 0 4px #e6b65c33, 0 8px 16px -8px #000c; }
 .spot-num { font: 700 20px var(--font-display); color: var(--felt-ink-2); }
 .spot-hint { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--felt-ink-2); }
 .spot-tag {
@@ -387,17 +387,21 @@ kbd {
 .seat.empty .spot-tag { display: none; }
 
 .chip-mini {
+  position: relative;
+  isolation: isolate;
   display: grid; place-items: center;
   width: 46px; height: 46px;
   border-radius: 50%;
-  background:
-    radial-gradient(circle, #fbf8f1 0 36%, var(--c) 37% 60%, transparent 61%),
-    repeating-conic-gradient(var(--c) 0 22.5deg, #fbf8f1 22.5deg 45deg);
+  background: repeating-conic-gradient(var(--c) 0 22.5deg, #fbf8f1 22.5deg 45deg);
   box-shadow: 0 3px 0 #0007, 0 6px 10px -4px #000c, inset 0 0 0 2px #0002;
   color: #111;
   font-size: 11px; font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+/* Cara de la ficha: anillo de color y centro claro donde va el monto. */
+.chip-mini::before, .chip-mini::after { content: ''; position: absolute; z-index: -1; border-radius: 50%; }
+.chip-mini::before { inset: 8%; background: var(--c); }
+.chip-mini::after { inset: 24%; background: #fbf8f1; }
 
 .plate {
   position: relative;
@@ -491,12 +495,13 @@ kbd {
   color: #fff;
   font-size: 13px; font-weight: 700;
   text-shadow: 0 1px 2px #000a;
-  background:
-    radial-gradient(circle, var(--c) 0 45%, transparent 46%),
-    repeating-conic-gradient(var(--c) 0 22.5deg, #fbf8f1 22.5deg 45deg);
+  position: relative;
+  isolation: isolate;
+  background: repeating-conic-gradient(var(--c) 0 22.5deg, #fbf8f1 22.5deg 45deg);
   box-shadow: 0 4px 0 #0008, 0 8px 14px -6px #000c, inset 0 0 0 3px #0003;
   transition: transform .12s var(--ease-out), box-shadow .12s;
 }
+.chip::before { content: ''; position: absolute; inset: 18%; z-index: -1; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px #0000002e; }
 .chip:hover { transform: translateY(-3px); box-shadow: 0 7px 0 #0008, 0 12px 18px -8px #000c, inset 0 0 0 3px #0003; }
 .chip:active { transform: translateY(1px); box-shadow: 0 2px 0 #0008, inset 0 0 0 3px #0003; }
 .chip.c25 { --c: var(--chip-25); }
@@ -622,7 +627,7 @@ table.chart { width: 100%; min-width: 480px; border-collapse: separate; border-s
   display: flex; justify-content: space-around; flex-wrap: wrap; gap: 16px;
   padding: 18px 12px;
   border-radius: 14px;
-  background: radial-gradient(120% 120% at 50% 20%, var(--felt-1), var(--felt-2) 60%, var(--felt-3));
+  background: linear-gradient(180deg, #1f6e48, var(--felt-2) 65%, var(--felt-3));
   box-shadow: inset 0 0 40px #0008;
 }
 .drill-side { display: flex; flex-direction: column; align-items: center; gap: 10px; }
