@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS = {
   bjPays: 1.5,
   minBet: 10,
   maxBet: 5000,
-  penetration: 0, // 0 = corte aleatorio entre el 50% y el 80% del zapato
+  penetration: 0, // 0 = corte aleatorio entre el 45% y el 55% del zapato
   showHint: false,
   feedback: true,
   showCount: false,
@@ -140,8 +140,8 @@ function buildShoe() {
   }
   state.shoe = cards;
   state.shoeSize = cards.length;
-  // Corte aleatorio: cada barajada la carta de corte cae en un punto distinto desde la mitad del zapato.
-  const pen = S().penetration || 0.5 + randomUnit() * 0.3;
+  // Corte aleatorio: en cada barajada la carta de corte cae entre el 45% y el 55% del zapato.
+  const pen = S().penetration || 0.45 + randomUnit() * 0.1;
   state.cutAt = Math.round(cards.length * (1 - pen));
   state.runningCount = 0;
   state.needShuffle = false;
