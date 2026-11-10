@@ -8,6 +8,12 @@ const PREFIX = 'mesa21-sala-';
 // Sin letras ni números que se confundan (O/0, I/1).
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const TIMEOUT = 12000;
+// Si se cae la conexión de un invitado, se vuelve a conectar solo: enseguida, a los 2 s y a los 5 s.
+const RETRY_WAIT = [0, 2000, 5000];
+// Al volver a la pestaña (por ejemplo, tras bloquear el teléfono) se comprueba que la sala conteste.
+const PING_TIMEOUT = 4000;
+const PING = 'ping';
+const PONG = 'pong';
 // Servidores STUN públicos: cada navegador averigua cómo lo ven desde internet.
 // (Los TURN que PeerJS trae por defecto ya no existen, así que no se usan.)
 const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }] };
@@ -57,11 +63,23 @@ function waitOpen(peer) {
   });
 }
 
+/** El anfitrión contesta solo las comprobaciones de los invitados; el juego no las ve. */
+function answerPings(handlers) {
+  return {
+    ...handlers,
+    onData(conn, msg) {
+      if (msg && msg.t === PING) send(conn, { t: PONG });
+      else handlers.onData(conn, msg);
+    },
+  };
+}
+
 /**
  * Abre una sala nueva. Prueba varios códigos por si uno ya está en uso.
  * handlers: onJoin(conn), onData(conn, msg), onLeave(conn), onError(texto)
  */
 export async function host(handlers) {
+  handlers = answerPings(handlers);
   if (LOCAL) return localHost(handlers);
   const Peer = await loadPeer();
   let lastError = null;
@@ -92,11 +110,9 @@ export async function host(handlers) {
   throw new Error(errorText(lastError));
 }
 
-/**
- * Se une a la sala `code`. handlers: onData(msg), onClose()
- */
-export async function join(code, meta, handlers) {
-  if (LOCAL) return localJoin(code, meta, handlers);
+/** Una conexión a la sala `code`. on: onData(msg), onClose() */
+async function connect(code, meta, on) {
+  if (LOCAL) return localConnect(code, meta, on);
   const Peer = await loadPeer();
   const peer = new Peer({ debug: 0, config: ICE });
   try {
@@ -123,12 +139,105 @@ export async function join(code, meta, handlers) {
     peer.destroy();
     throw e;
   });
-  conn.on('data', handlers.onData);
-  conn.on('close', handlers.onClose);
+  conn.on('data', on.onData);
+  conn.on('close', on.onClose);
   peer.on('disconnected', () => {
     if (!peer.destroyed) peer.reconnect();
   });
   return { peer, conn, id: peer.id };
+}
+
+/**
+ * Se une a la sala `code`. Si el primer intento falla, lanza el error.
+ * Si después se cae la conexión, vuelve a conectar solo: avisa con onRetry(intento, total) y
+ * onReconnect(id), con un id nuevo. onClose() solo llega si no lo logra.
+ * handlers: onData(msg), onRetry(n, total), onReconnect(id), onClose()
+ * Devuelve { id, send(msg), close() }.
+ */
+export async function join(code, meta, handlers) {
+  let link = null;
+  let left = false;
+  let retrying = false;
+  let pingTimer = 0;
+
+  async function open() {
+    const l = { dead: false };
+    const parts = await connect(code, meta, {
+      onData(msg) {
+        if (l.dead) return;
+        if (msg && msg.t === PONG) clearTimeout(pingTimer);
+        else handlers.onData(msg);
+      },
+      onClose() {
+        if (!l.dead) reconnect();
+      },
+    });
+    return Object.assign(l, parts);
+  }
+
+  function drop(l) {
+    if (!l || l.dead) return;
+    l.dead = true;
+    close(l.peer);
+  }
+
+  async function reconnect() {
+    if (retrying || left) return;
+    retrying = true;
+    clearTimeout(pingTimer);
+    drop(link);
+    try {
+      for (let i = 0; i < RETRY_WAIT.length; i++) {
+        handlers.onRetry(i + 1, RETRY_WAIT.length);
+        await new Promise((r) => setTimeout(r, RETRY_WAIT[i]));
+        if (left) return;
+        try {
+          const l = await open();
+          if (left || !l.conn.open) {
+            drop(l);
+            if (left) return;
+            continue;
+          }
+          link = l;
+          handlers.onReconnect(l.id);
+          return;
+        } catch {
+          /* se intenta otra vez */
+        }
+      }
+      if (!left) handlers.onClose();
+    } finally {
+      retrying = false;
+    }
+  }
+
+  // Un teléfono bloqueado puede dejar la conexión muerta sin avisar: al volver se pregunta.
+  function check() {
+    if (left || !link || link.dead || document.visibilityState !== 'visible') return;
+    const l = link;
+    clearTimeout(pingTimer);
+    pingTimer = setTimeout(() => {
+      if (link === l && !l.dead) reconnect();
+    }, PING_TIMEOUT);
+    send(l.conn, { t: PING });
+  }
+
+  link = await open();
+  document.addEventListener('visibilitychange', check);
+  return {
+    get id() {
+      return link.id;
+    },
+    send(msg) {
+      if (!link.dead) send(link.conn, msg);
+    },
+    close() {
+      left = true;
+      clearTimeout(pingTimer);
+      document.removeEventListener('visibilitychange', check);
+      drop(link);
+    },
+  };
 }
 
 export function send(conn, msg) {
@@ -199,7 +308,7 @@ function localHost(handlers) {
   return { code, peer };
 }
 
-function localJoin(code, meta, handlers) {
+function localConnect(code, meta, on) {
   const id = `local-${Math.random().toString(36).slice(2, 10)}`;
   const bc = new BroadcastChannel(PREFIX + cleanCode(code));
   const conn = { peer: PREFIX + cleanCode(code), open: false, send: (msg) => bc.postMessage({ from: id, to: 'host', type: 'data', data: wire(msg) }) };
@@ -225,10 +334,10 @@ function localJoin(code, meta, handlers) {
         clearTimeout(timer);
         conn.open = true;
         resolve({ peer, conn, id });
-      } else if (m.type === 'data') handlers.onData(m.data);
+      } else if (m.type === 'data') on.onData(m.data);
       else if (m.type === 'close') {
         conn.open = false;
-        handlers.onClose();
+        on.onClose();
       }
     };
     addEventListener('pagehide', () => peer.destroy());

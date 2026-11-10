@@ -94,19 +94,22 @@ const online = {
   code: '',
   peer: null,
   conns: new Map(), // anfitrión: id del invitado -> { conn, pid, name }
-  hostConn: null,
+  room: null, // invitado: la conexión con la sala ({ id, send, close })
+  hello: null, // invitado: el saludo con que entró, para repetirlo al reconectar
   actingFor: null, // anfitrión: invitado cuya jugada se está aplicando
   pid: null,
   name: '',
   status: '',
   error: '',
-  closed: false,
+  closed: false, // invitado: false · 'retry' (reconectando) · 'lost' · 'bye' (la sala se cerró)
+  retry: null, // invitado: { n, total } mientras reconecta
   seen: new Map(), // invitado: cuándo apareció cada carta (para animarla)
   flips: new Map(),
   turnKey: '',
   sentHistory: -1,
   ready: new Set(), // dispositivos que ya pulsaron «Repartir» en esta ronda de apuestas
-  left: new Map(), // anfitrión: saldo de quien se desconectó, por nombre, por si vuelve
+  left: new Map(), // anfitrión: saldo y puestos de quien se desconectó, por nombre, por si vuelve
+  seatsBack: new Map(), // anfitrión: puestos que recupera quien volvió, al empezar las apuestas
 };
 const NAME_KEY = 'mesa21-nombre-en-linea';
 
@@ -374,14 +377,24 @@ function readyToDeal() {
   const who = actor();
   const force = who === 'host' && online.ready.has('host');
   online.ready.add(who);
-  const left = waitingOwners();
-  if (!left.length || force) {
+  if (!waitingOwners().length || force) {
     online.ready.clear();
     return true;
   }
-  const names = left.map(ownerName).join(' y ');
-  notice(who === 'host' ? `Esperando a ${names}. Pulsa Repartir otra vez para no esperar.` : `Listo. Esperando a ${names}.`);
+  render();
   return false;
+}
+
+/**
+ * En una sala, a quién se espera para repartir, si este dispositivo ya dijo «Repartir».
+ * Se calcula al dibujar para que siga al día cuando los demás pulsan Repartir.
+ */
+function waitingText() {
+  if (!online.role || state.phase !== 'betting' || !online.ready.has(online.myId)) return '';
+  const left = waitingOwners();
+  if (!left.length) return '';
+  const names = left.map(ownerName).join(' y ');
+  return online.role === 'host' ? `Esperando a ${names}. Pulsa Repartir otra vez para no esperar.` : `Listo. Esperando a ${names}.`;
 }
 
 async function deal() {
@@ -1596,7 +1609,8 @@ function whoHTML(p, extra) {
 
 function renderDockInfo() {
   const el = $('#dock-info');
-  const note = state.notice ? `<p class="notice" role="alert">${esc(state.notice)}</p>` : '';
+  const noticeText = state.notice || waitingText();
+  const note = noticeText ? `<p class="notice" role="alert">${esc(noticeText)}</p>` : '';
   if (state.phase === 'betting') {
     const seat = state.seats[state.selectedSeat];
     if (isMySeat(seat)) {
@@ -2592,7 +2606,7 @@ const PREF_KEYS = ['showHint', 'feedback', 'showCount', 'sound', 'volume', 'feed
 
 function guestSend(msg) {
   if (online.role !== 'guest') return false;
-  if (!online.closed) net.send(online.hostConn, msg);
+  if (!online.closed) online.room.send(msg);
   return true;
 }
 
@@ -2712,7 +2726,11 @@ function welcomeGuest(conn, msg) {
     const bankroll = Math.max(0, Math.min(1e9, Number(msg.bankroll) || 1000));
     p = newPlayer(name, false, state.players.length, bankroll);
     const back = online.left.get(key);
-    if (back) Object.assign(p, back);
+    if (back) {
+      const { seats, ...saved } = back;
+      Object.assign(p, saved);
+      online.seatsBack.set(p.id, seats);
+    }
     online.left.delete(key);
     state.players.push(p);
   }
@@ -2726,15 +2744,21 @@ function welcomeGuest(conn, msg) {
   renderOnline();
 }
 
-/** Sienta a un invitado en el puesto libre más central, entre rondas. */
+/**
+ * Sienta a un invitado entre rondas. Quien vuelve recupera los puestos que tenía, si siguen
+ * libres; si no, se sienta en el puesto libre más central.
+ */
 function seatGuest(p) {
   if (!p || p.away || state.phase !== 'betting' || state.seats.some((s) => s.playerId === p.id)) return;
-  const si = [3, 2, 4, 1, 5, 0, 6].find((i) => !state.seats[i].playerId);
-  if (si === undefined) return;
+  const back = (online.seatsBack.get(p.id) || []).filter((i) => !state.seats[i].playerId);
+  online.seatsBack.delete(p.id);
+  const central = [3, 2, 4, 1, 5, 0, 6].find((i) => !state.seats[i].playerId);
+  const targets = back.length ? back : central === undefined ? [] : [central];
+  if (!targets.length) return;
   const prevActor = online.actingFor;
   const prevSeat = state.selectedSeat;
   online.actingFor = p.owner;
-  sit(si, p.id);
+  targets.forEach((si) => sit(si, p.id));
   online.actingFor = prevActor;
   state.selectedSeat = prevSeat;
   pickSelectedSeat();
@@ -2753,7 +2777,8 @@ function asGuest(conn, si, fn) {
     const note = state.notice;
     online.actingFor = null;
     state.selectedSeat = prevSeat;
-    state.notice = prevNotice;
+    // Si el invitado empezó la ronda, el aviso que tenía el anfitrión ya no aplica.
+    state.notice = state.phase === 'betting' ? prevNotice : '';
     if (note) net.send(conn, { t: 'notice', text: note });
     render();
   }
@@ -2818,7 +2843,8 @@ function removeAwayPlayers() {
   for (const p of state.players) {
     if (!away.has(p.id)) continue;
     const { id, color, bankroll, startBankroll, rebuys, stats } = p;
-    online.left.set(p.name.toLowerCase(), { id, color, bankroll, startBankroll, rebuys, stats });
+    const seats = state.seats.flatMap((s, i) => (s.playerId === id ? [i] : []));
+    online.left.set(p.name.toLowerCase(), { id, color, bankroll, startBankroll, rebuys, stats, seats });
   }
   for (const s of state.seats) {
     if (away.has(s.playerId)) {
@@ -2843,6 +2869,7 @@ function closeRoom() {
   removeAwayPlayers();
   Object.assign(online, { role: null, myId: 'local', code: '', peer: null, error: '', status: '' });
   online.conns.clear();
+  online.seatsBack.clear();
   save();
   render();
   renderOnline();
@@ -2868,8 +2895,9 @@ async function joinRoom(code, name) {
   renderOnline();
   try {
     const me = state.players.find((p) => !p.isBot);
-    const { peer, conn, id } = await net.join(code, { name }, { onData: onHostData, onClose: hostClosed });
-    Object.assign(online, { role: 'guest', myId: id, peer, hostConn: conn, code, name, status: '', closed: false });
+    const room = await net.join(code, { name }, { onData: onHostData, onRetry: onRoomRetry, onReconnect: onRoomBack, onClose: () => hostClosed() });
+    Object.assign(online, { role: 'guest', myId: room.id, room, code, name, status: '', closed: false });
+    online.hello = { t: 'hello', name, bankroll: me ? me.bankroll : 1000 };
     try {
       localStorage.setItem(NAME_KEY, name);
     } catch {
@@ -2877,7 +2905,7 @@ async function joinRoom(code, name) {
     }
     online.seen.clear();
     online.flips.clear();
-    net.send(conn, { t: 'hello', name, bankroll: me ? me.bankroll : 1000 });
+    room.send(online.hello);
     renderOnline();
   } catch (e) {
     online.status = '';
@@ -2978,6 +3006,8 @@ function applySnapshot(m) {
     return c;
   };
   const wasHidden = state.dealer.hidden && state.dealer.cards.length > 1;
+  // Al repartir se borra el aviso de las apuestas, como en la mesa de un solo dispositivo.
+  if (state.phase === 'betting' && m.phase !== 'betting') state.notice = '';
   Object.assign(state.settings, m.settings);
   state.players = m.players;
   state.seats = m.seats.map((s) => ({
@@ -3004,23 +3034,49 @@ function applySnapshot(m) {
     state.hintShown = false;
     online.turnKey = turnKey;
   }
-  if (state.phase === 'betting') state.notice = state.notice || '';
   pickSelectedSeat();
   renderPrint.key = '';
   render();
 }
 
+/** Invitado: la sala se cerró ('bye') o no se pudo volver a conectar. */
 function hostClosed(byHost = false) {
-  if (online.role !== 'guest' || online.closed) return;
+  if (online.role !== 'guest' || online.closed === 'bye' || online.closed === 'lost') return;
   online.closed = byHost ? 'bye' : 'lost';
+  // La sala ya no existe: no se sigue intentando volver.
+  if (byHost) online.room.close();
+  state.event = null;
+  render();
   renderOnline();
-  renderOnlineButton();
   if (!$('#dlg-online').open) openDialog('#dlg-online');
+}
+
+/** Invitado: se cayó la conexión y se está intentando volver solo. La mesa se queda como estaba. */
+function onRoomRetry(n, total) {
+  if (online.role !== 'guest' || online.closed === 'bye') return;
+  online.closed = 'retry';
+  online.retry = { n, total };
+  // Mientras tanto no se puede jugar: los botones se apagan hasta que llegue la mesa otra vez.
+  state.pending = null;
+  tableEvent('Se perdió la conexión. Reconectando…', 60000);
+  render();
+  renderOnline();
+}
+
+/** Invitado: volvió a conectar. El anfitrión lo reconoce por el nombre y le devuelve sus puestos. */
+function onRoomBack(id) {
+  if (online.role !== 'guest') return;
+  online.myId = id;
+  online.closed = false;
+  online.retry = null;
+  online.room.send(online.hello);
+  render();
+  renderOnline();
 }
 
 /** Salir de la sala: se vuelve a la mesa propia guardada en este dispositivo. */
 function leaveRoom() {
-  net.close(online.peer);
+  if (online.room) online.room.close();
   location.href = location.pathname;
 }
 
@@ -3030,7 +3086,7 @@ function renderOnlineButton() {
   const on = !!online.role && !online.closed;
   b.classList.toggle('on', on);
   b.setAttribute('aria-pressed', String(on));
-  b.title = on ? `Mesa en línea: sala ${online.code}` : 'Mesa en línea';
+  b.title = on ? `Mesa en línea: sala ${online.code}` : online.closed === 'retry' ? 'Mesa en línea: reconectando…' : 'Mesa en línea';
 }
 
 function renderOnline() {
@@ -3059,6 +3115,10 @@ function renderOnline() {
     el.innerHTML = online.closed === 'bye'
       ? `<p>Quien creó la sala la cerró.</p>
          <div class="btn-row"><span class="spacer"></span><button class="btn primary" data-action="leave-room">Volver a mi mesa</button></div>`
+      : online.closed === 'retry'
+      ? `<p>Se perdió la conexión con la sala ${online.code}. Reconectando… (intento ${online.retry.n} de ${online.retry.total})</p>
+         <p class="muted small">Cuando vuelva la conexión sigues en tus puestos, con tu saldo.</p>
+         <div class="btn-row"><span class="spacer"></span><button class="btn ghost danger" data-action="leave-room">Salir de la sala</button></div>`
       : online.closed
       ? `<p>Se perdió la conexión con la sala ${online.code}.</p>
          <p class="muted small">Si vuelves a entrar con el mismo nombre, recuperas tus puestos y tu saldo.</p>
@@ -3368,7 +3428,7 @@ document.addEventListener('click', (e) => {
       // Se recarga con el código puesto; el nombre ya queda escrito.
       const q = new URLSearchParams(location.search);
       q.set('sala', online.code);
-      net.close(online.peer);
+      online.room.close();
       location.href = `${location.pathname}?${q}`;
       break;
     }
